@@ -131,12 +131,13 @@ def _check_performance_advisor(
             since=now_ms - one_hour_ms,
             duration=one_hour_ms,
         )
-        suggested_indexes = client.om.performance_advisor.get_suggested_indexes(
+        advisor_response = client.om.performance_advisor.get_suggested_indexes(
             project_id=project_id,
             host_id=host_id,
             since=now_ms - one_hour_ms,
             duration=one_hour_ms,
         )
+        suggested_indexes = advisor_response.get("suggested_indexes", [])
     except Exception:
         hs.checks.append(
             Check(

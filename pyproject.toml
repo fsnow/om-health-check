@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "om-health-check"
+version = "0.1.0"
+description = "MongoDB Ops Manager automated health check tool"
+requires-python = ">=3.10"
+dependencies = [
+    "python-mongodb-ops-manager",
+    "jinja2",
+    "packaging",
+    "pyyaml",
+]
+
+[project.scripts]
+om-health-check = "om_health_check.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

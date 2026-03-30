@@ -1,0 +1,51 @@
+"""Thin wrapper around OpsManagerClient for project/cluster/host resolution."""
+
+from __future__ import annotations
+
+from opsmanager import OpsManagerClient
+from opsmanager.types import Cluster, Host, Project
+
+from om_health_check.config import Config
+
+
+class HealthCheckClient:
+    """Wraps OpsManagerClient with convenience methods for health check workflows."""
+
+    def __init__(self, config: Config):
+        self.om = OpsManagerClient(
+            base_url=config.om_url,
+            public_key=config.username,
+            private_key=config.api_key,
+        )
+
+    def close(self):
+        self.om.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def resolve_project(self, project_name: str) -> Project:
+        """Resolve a project name to a Project object. Raises on not found."""
+        return self.om.projects.get_by_name(project_name)
+
+    def get_clusters(
+        self, project_id: str, cluster_name: str | None = None
+    ) -> list[Cluster]:
+        """List clusters in a project, optionally filtered by name."""
+        clusters = self.om.clusters.list(project_id)
+        if cluster_name:
+            clusters = [c for c in clusters if c.cluster_name == cluster_name]
+            if not clusters:
+                raise ValueError(
+                    f"Cluster '{cluster_name}' not found in project {project_id}"
+                )
+        return clusters
+
+    def get_hosts_for_cluster(
+        self, project_id: str, cluster_id: str
+    ) -> list[Host]:
+        """Get all hosts belonging to a specific cluster."""
+        return self.om.deployments.list_hosts(project_id, cluster_id=cluster_id)

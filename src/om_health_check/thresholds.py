@@ -46,7 +46,7 @@ class Threshold:
 # Section 1: Connectivity & Infrastructure
 # ---------------------------------------------------------------------------
 
-RESTARTS_IN_LAST_HOUR = Threshold(red=0, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
+RESTARTS_IN_LAST_HOUR = Threshold(red=1, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 
 SYSTEM_NETWORK_BYTES_IN = Threshold(deviation=3.0, mode=MODE_BASELINE)
 SYSTEM_NETWORK_BYTES_OUT = Threshold(deviation=3.0, mode=MODE_BASELINE)
@@ -156,7 +156,7 @@ OPLOG_REPLICATION_LAG_TIME = Threshold(
     red=60, warn=10, direction=DIR_ABOVE, mode=MODE_ABSOLUTE,
 )
 OPLOG_MASTER_TIME = Threshold(
-    red=24, warn=48, direction=DIR_BELOW, mode=MODE_ABSOLUTE,
+    red=24, warn=36, direction=DIR_BELOW, mode=MODE_ABSOLUTE,
 )
 OPLOG_RATE_GB_PER_HOUR = Threshold(deviation=3.0, mode=MODE_BASELINE)
 

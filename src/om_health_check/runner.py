@@ -179,9 +179,20 @@ def _check_cluster(client, project, cluster) -> ClusterReport:
 
 
 def _render(report: Report, config: Config):
-    """Render the report in all requested formats."""
+    """Render the report in all requested formats.
+
+    Single format prints to stdout. Multiple formats write to separate files.
+    """
+    if len(config.formats) == 1:
+        renderer = RENDERERS.get(config.formats[0])
+        if renderer:
+            print(renderer(report))
+        return
+
     for fmt in config.formats:
         renderer = RENDERERS.get(fmt)
         if renderer:
-            output = renderer(report)
-            print(output)
+            filename = f"om-health-check-report.{fmt}"
+            with open(filename, "w") as f:
+                f.write(renderer(report))
+            print(f"Wrote {filename}", file=sys.stderr)

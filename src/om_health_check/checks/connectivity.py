@@ -51,7 +51,6 @@ def run(
     _check_agents(client, project_id, hosts, section)
 
     # Per-host checks
-    host_hostnames = {h.hostname for h in hosts}
     for host in hosts:
         hs = HostSection(
             host=host.host_port,

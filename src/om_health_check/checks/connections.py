@@ -10,6 +10,7 @@ from om_health_check.models import (
     STATUS_GREEN,
     STATUS_INFO,
     STATUS_RED,
+    STATUS_WARN,
     Check,
     HostSection,
     Section,
@@ -80,13 +81,13 @@ def run(
                     reads_result = evaluate_metric(
                         "OP_EXECUTION_TIME_READS", reads_current, reads_baseline
                     )
-                    if reads_result.status in (STATUS_RED, "WARN"):
+                    if reads_result.status in (STATUS_RED, STATUS_WARN):
                         latency_elevated = True
                 if writes_current is not None:
                     writes_result = evaluate_metric(
                         "OP_EXECUTION_TIME_WRITES", writes_current, writes_baseline
                     )
-                    if writes_result.status in (STATUS_RED, "WARN"):
+                    if writes_result.status in (STATUS_RED, STATUS_WARN):
                         latency_elevated = True
 
                 if latency_elevated:

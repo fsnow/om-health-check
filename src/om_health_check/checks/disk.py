@@ -6,7 +6,7 @@ from opsmanager.types import Cluster, Host
 
 from om_health_check.baseline import evaluate_metric, fetch_disk_metrics, fetch_host_metrics
 from om_health_check.client import HealthCheckClient
-from om_health_check.models import Check, HostSection, Section
+from om_health_check.models import STATUS_RED, STATUS_WARN, Check, HostSection, Section
 
 _DISK_METRICS = [
     "DISK_PARTITION_LATENCY_READ",
@@ -14,6 +14,7 @@ _DISK_METRICS = [
     "DISK_PARTITION_IOPS_READ",
     "DISK_PARTITION_IOPS_WRITE",
     "DISK_PARTITION_SPACE_PERCENT_FREE",
+    "DISK_PARTITION_QUEUE_DEPTH",
 ]
 
 _UNITS = {
@@ -22,6 +23,7 @@ _UNITS = {
     "DISK_PARTITION_IOPS_READ": "IOPS",
     "DISK_PARTITION_IOPS_WRITE": "IOPS",
     "DISK_PARTITION_SPACE_PERCENT_FREE": "%",
+    "DISK_PARTITION_QUEUE_DEPTH": "depth",
 }
 
 
@@ -78,9 +80,9 @@ def run(
             )
             # Only note correlation if disk section has RED checks and iowait is elevated
             disk_has_red = any(
-                c.status == "RED" for c in hs.checks
+                c.status == STATUS_RED for c in hs.checks
             )
-            if disk_has_red and iowait_result.status in ("RED", "WARN"):
+            if disk_has_red and iowait_result.status in (STATUS_RED, STATUS_WARN):
                 hs.checks.append(
                     Check(
                         name="CPU iowait correlation",

@@ -6,13 +6,32 @@ build-backend = "setuptools.build_meta"
 name = "om-health-check"
 version = "0.1.0"
 description = "MongoDB Ops Manager automated health check tool"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
-dependencies = [
-    "opsmanager",
-    "jinja2",
-    "packaging",
-    "pyyaml",
+authors = [
+    {name = "Frank Snow", email = "frank.snow@mongodb.com"},
 ]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "opsmanager>=0.4.2",
+    "jinja2>=3.0",
+    "packaging>=21.0",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Source = "https://github.com/fsnow/om-health-check"
 
 [project.scripts]
 om-health-check = "om_health_check.cli:main"

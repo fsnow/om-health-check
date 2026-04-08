@@ -124,4 +124,4 @@ Granularity is PT1H (hourly averages). Ops Manager retains hourly data for 2 mon
 
 ## License
 
-MIT
+Apache 2.0

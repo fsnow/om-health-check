@@ -1,9 +1,12 @@
 CLAUDE.md
 .claude/
 docs/
+output/
+om_config.md
 __pycache__/
 *.pyc
 *.egg-info/
 dist/
 build/
 .venv/
+.DS_Store

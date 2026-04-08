@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "MongoDB Ops Manager automated health check tool"
 requires-python = ">=3.10"
 dependencies = [
-    "python-mongodb-ops-manager",
+    "opsmanager",
     "jinja2",
     "packaging",
     "pyyaml",

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from jinja2 import Template
+from jinja2 import Environment
 
 from om_health_check.models import Report
 
-_TEMPLATE = Template("""\
+_ENV = Environment(autoescape=True)
+
+_TEMPLATE = _ENV.from_string("""\
 <!DOCTYPE html>
 <html lang="en">
 <head>

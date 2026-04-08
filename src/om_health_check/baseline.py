@@ -6,6 +6,7 @@ and evaluates status using threshold configuration.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -228,6 +229,70 @@ def _extract_latest_value(measurements: ProcessMeasurements, metric_name: str) -
     return None
 
 
+def _fetch_with_fallback(fetch_fn, metric_names: list[str], **kwargs):
+    """Try a batched metric fetch; on failure, fall back to per-metric calls.
+
+    Returns a pair (current_measurements, baseline_measurements).
+    """
+    baseline_start, baseline_end = _baseline_time_range()
+
+    try:
+        current = fetch_fn(
+            granularity="PT1H", period="PT1H",
+            metrics=metric_names, **kwargs,
+        )
+    except Exception as exc:
+        print(f"Batch metric fetch failed, falling back to per-metric: {exc}", file=sys.stderr)
+        current = _fetch_individually(fetch_fn, metric_names, **kwargs)
+
+    try:
+        baseline = fetch_fn(
+            granularity="PT1H", period=None,
+            start=baseline_start, end=baseline_end,
+            metrics=metric_names, **kwargs,
+        )
+    except Exception as exc:
+        print(f"Batch baseline fetch failed, falling back to per-metric: {exc}", file=sys.stderr)
+        baseline = _fetch_individually(
+            fetch_fn, metric_names,
+            start=baseline_start, end=baseline_end, **kwargs,
+        )
+
+    return current, baseline
+
+
+def _fetch_individually(fetch_fn, metric_names: list[str], start=None, end=None, **kwargs):
+    """Fetch metrics one at a time, skipping any that fail."""
+    all_measurements = []
+    failed = []
+    for name in metric_names:
+        try:
+            if start is not None:
+                result = fetch_fn(
+                    granularity="PT1H", period=None,
+                    start=start, end=end,
+                    metrics=[name], **kwargs,
+                )
+            else:
+                result = fetch_fn(
+                    granularity="PT1H", period="PT1H",
+                    metrics=[name], **kwargs,
+                )
+            all_measurements.extend(result.measurements)
+        except Exception:
+            failed.append(name)
+    if failed:
+        print(f"Metrics unavailable: {', '.join(failed)}", file=sys.stderr)
+    return _FallbackMeasurements(all_measurements)
+
+
+class _FallbackMeasurements:
+    """Minimal stand-in for ProcessMeasurements when built from individual calls."""
+
+    def __init__(self, measurements):
+        self.measurements = measurements
+
+
 def fetch_host_metrics(
     om: OpsManagerClient,
     project_id: str,
@@ -237,25 +302,11 @@ def fetch_host_metrics(
     """Fetch current and baseline values for a list of host metrics.
 
     Returns dict mapping metric_name -> (current_value, baseline_value).
+    Resilient to invalid metric names — falls back to per-metric fetching.
     """
-    baseline_start, baseline_end = _baseline_time_range()
-
-    current = om.measurements.host(
-        project_id=project_id,
-        host_id=host_id,
-        granularity="PT1H",
-        period="PT1H",
-        metrics=metric_names,
-    )
-
-    baseline = om.measurements.host(
-        project_id=project_id,
-        host_id=host_id,
-        granularity="PT1H",
-        period=None,
-        start=baseline_start,
-        end=baseline_end,
-        metrics=metric_names,
+    current, baseline = _fetch_with_fallback(
+        om.measurements.host, metric_names,
+        project_id=project_id, host_id=host_id,
     )
 
     result = {}
@@ -277,27 +328,12 @@ def fetch_disk_metrics(
     """Fetch current and baseline values for a list of disk metrics.
 
     Returns dict mapping metric_name -> (current_value, baseline_value).
+    Resilient to invalid metric names — falls back to per-metric fetching.
     """
-    baseline_start, baseline_end = _baseline_time_range()
-
-    current = om.measurements.disk(
-        project_id=project_id,
-        host_id=host_id,
+    current, baseline = _fetch_with_fallback(
+        om.measurements.disk, metric_names,
+        project_id=project_id, host_id=host_id,
         partition_name=partition_name,
-        granularity="PT1H",
-        period="PT1H",
-        metrics=metric_names,
-    )
-
-    baseline = om.measurements.disk(
-        project_id=project_id,
-        host_id=host_id,
-        partition_name=partition_name,
-        granularity="PT1H",
-        period=None,
-        start=baseline_start,
-        end=baseline_end,
-        metrics=metric_names,
     )
 
     result = {}

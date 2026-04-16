@@ -161,15 +161,11 @@ class TestExceedsDeviation:
 
 class TestModeAbsolute:
     def test_above_red(self):
-        r = evaluate_metric("CACHE_FILL_RATIO", 96.0, 90.0)
+        r = evaluate_metric("DISK_PARTITION_IOPS_READ", 960, 900)
         assert r.status == STATUS_RED
 
-    def test_above_warn(self):
-        r = evaluate_metric("CACHE_FILL_RATIO", 82.0, 80.0)
-        assert r.status == STATUS_WARN
-
     def test_above_green(self):
-        r = evaluate_metric("CACHE_FILL_RATIO", 70.0, 80.0)
+        r = evaluate_metric("DISK_PARTITION_IOPS_READ", 800, 750)
         assert r.status == STATUS_GREEN
 
     def test_below_red(self):
@@ -186,7 +182,7 @@ class TestModeAbsolute:
 
     def test_baseline_is_informational(self):
         # Even with huge deviation, absolute mode ignores baseline for status
-        r = evaluate_metric("CACHE_FILL_RATIO", 70.0, 10.0)
+        r = evaluate_metric("DISK_PARTITION_IOPS_READ", 700, 100)
         assert r.status == STATUS_GREEN  # 7x baseline but under threshold
 
     def test_replication_lag_red(self):
@@ -384,14 +380,6 @@ class TestEdgeCases:
         r = evaluate_metric("CONNECTIONS", 10000, None)
         assert r.deviation is None
 
-    def test_restarts_zero_green(self):
-        r = evaluate_metric("RESTARTS_IN_LAST_HOUR", 0, 0)
-        assert r.status == STATUS_GREEN
-
-    def test_restarts_one_red(self):
-        r = evaluate_metric("RESTARTS_IN_LAST_HOUR", 1, 0)
-        assert r.status == STATUS_RED
-
     def test_message_contains_value(self):
         r = evaluate_metric("CONNECTIONS", 10000, 5000)
         assert "10,000" in r.message
@@ -472,22 +460,29 @@ class TestFetchIndividually:
         assert fetch_fn.call_count == 2
 
     def test_skips_failed_metrics(self, capsys):
+        from om_health_check.baseline import _warned_metrics
+        _warned_metrics.discard("Y1")
+        _warned_metrics.discard("Y2")
         result1 = MagicMock(measurements=[MagicMock()])
         fetch_fn = MagicMock(side_effect=[result1, Exception("invalid metric")])
 
-        fb = _fetch_individually(fetch_fn, ["A", "B"])
+        fb = _fetch_individually(fetch_fn, ["Y1", "Y2"])
         assert len(fb.measurements) == 1
         captured = capsys.readouterr()
-        assert "B" in captured.err
+        assert "Y2" in captured.err
 
     def test_all_fail(self, capsys):
+        from om_health_check.baseline import _warned_metrics
+        _warned_metrics.discard("X1")
+        _warned_metrics.discard("X2")
+        _warned_metrics.discard("X3")
         fetch_fn = MagicMock(side_effect=Exception("network error"))
-        fb = _fetch_individually(fetch_fn, ["A", "B", "C"])
+        fb = _fetch_individually(fetch_fn, ["X1", "X2", "X3"])
         assert len(fb.measurements) == 0
         captured = capsys.readouterr()
-        assert "A" in captured.err
-        assert "B" in captured.err
-        assert "C" in captured.err
+        assert "X1" in captured.err
+        assert "X2" in captured.err
+        assert "X3" in captured.err
 
     def test_baseline_params_passed(self):
         result = MagicMock(measurements=[])
@@ -529,7 +524,7 @@ class TestFetchWithFallback:
 
     @patch("om_health_check.baseline._fetch_individually")
     @patch("om_health_check.baseline._baseline_time_range")
-    def test_current_batch_fails_falls_back(self, mock_time, mock_indiv, capsys):
+    def test_current_batch_fails_falls_back(self, mock_time, mock_indiv):
         mock_time.return_value = ("2026-01-01T00:00:00", "2026-01-01T01:00:00")
         fallback = _FallbackMeasurements([])
         baseline_result = MagicMock()
@@ -540,8 +535,6 @@ class TestFetchWithFallback:
         assert current is fallback
         assert baseline is baseline_result
         mock_indiv.assert_called_once()
-        captured = capsys.readouterr()
-        assert "falling back" in captured.err.lower()
 
     @patch("om_health_check.baseline._fetch_individually")
     @patch("om_health_check.baseline._baseline_time_range")

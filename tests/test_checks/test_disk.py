@@ -19,13 +19,12 @@ class TestDiskMetrics:
             "DISK_PARTITION_IOPS_READ": (100, 120),
             "DISK_PARTITION_IOPS_WRITE": (80, 90),
             "DISK_PARTITION_SPACE_PERCENT_FREE": (60, 65),
-            "DISK_PARTITION_QUEUE_DEPTH": (1, 1),
         }
         mock_host_fetch.return_value = {"SYSTEM_NORMALIZED_CPU_IOWAIT": (1.0, 1.0)}
 
         section = run(mock_client, "p1", cluster, [primary])
         checks = section.hosts[0].checks
-        assert len(checks) == 6
+        assert len(checks) == 5
         assert all(c.status == STATUS_GREEN for c in checks)
 
     @patch("om_health_check.checks.disk.fetch_host_metrics")
@@ -39,7 +38,6 @@ class TestDiskMetrics:
             "DISK_PARTITION_IOPS_READ": (100, 120),
             "DISK_PARTITION_IOPS_WRITE": (80, 90),
             "DISK_PARTITION_SPACE_PERCENT_FREE": (60, 65),
-            "DISK_PARTITION_QUEUE_DEPTH": (1, 1),
         }
         mock_host_fetch.return_value = {"SYSTEM_NORMALIZED_CPU_IOWAIT": (1.0, 1.0)}
 
@@ -58,7 +56,6 @@ class TestDiskMetrics:
             "DISK_PARTITION_IOPS_READ": (100, 120),
             "DISK_PARTITION_IOPS_WRITE": (80, 90),
             "DISK_PARTITION_SPACE_PERCENT_FREE": (5, 60),  # <= 10 = RED
-            "DISK_PARTITION_QUEUE_DEPTH": (1, 1),
         }
         mock_host_fetch.return_value = {"SYSTEM_NORMALIZED_CPU_IOWAIT": (1.0, 1.0)}
 
@@ -77,7 +74,6 @@ class TestDiskMetrics:
             "DISK_PARTITION_IOPS_READ": (100, 120),
             "DISK_PARTITION_IOPS_WRITE": (80, 90),
             "DISK_PARTITION_SPACE_PERCENT_FREE": (60, 65),
-            "DISK_PARTITION_QUEUE_DEPTH": (1, 1),
         }
         mock_host_fetch.return_value = {"SYSTEM_NORMALIZED_CPU_IOWAIT": (1.0, 1.0)}
 
@@ -108,7 +104,7 @@ class TestIowaitCorrelation:
             "DISK_PARTITION_IOPS_READ": (100, 120),
             "DISK_PARTITION_IOPS_WRITE": (80, 90),
             "DISK_PARTITION_SPACE_PERCENT_FREE": (60, 65),
-            "DISK_PARTITION_QUEUE_DEPTH": (1, 1),
+
         }
         # iowait RED: 25% > 20 and 5x > 3.0
         mock_host_fetch.return_value = {"SYSTEM_NORMALIZED_CPU_IOWAIT": (25.0, 5.0)}
@@ -131,7 +127,7 @@ class TestIowaitCorrelation:
             "DISK_PARTITION_IOPS_READ": (100, 120),
             "DISK_PARTITION_IOPS_WRITE": (80, 90),
             "DISK_PARTITION_SPACE_PERCENT_FREE": (60, 65),
-            "DISK_PARTITION_QUEUE_DEPTH": (1, 1),
+
         }
         mock_host_fetch.return_value = {"SYSTEM_NORMALIZED_CPU_IOWAIT": (25.0, 5.0)}
 

@@ -140,7 +140,7 @@ def make_sample_report():
 
     s2 = Section(name="Cache Resources")
     hs2 = HostSection(host="mongo1:27017", role="PRIMARY")
-    hs2.checks.append(Check(name="CACHE_FILL_RATIO", status=STATUS_WARN, value=82.0, message="approaching"))
+    hs2.checks.append(Check(name="CACHE_USED_BYTES", status=STATUS_WARN, value=82.0, message="approaching"))
     s2.hosts.append(hs2)
     cr.sections.append(s2)
 

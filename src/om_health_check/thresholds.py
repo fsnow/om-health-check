@@ -46,10 +46,8 @@ class Threshold:
 # Section 1: Connectivity & Infrastructure
 # ---------------------------------------------------------------------------
 
-RESTARTS_IN_LAST_HOUR = Threshold(red=1, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
-
-SYSTEM_NETWORK_BYTES_IN = Threshold(deviation=3.0, mode=MODE_BASELINE)
-SYSTEM_NETWORK_BYTES_OUT = Threshold(deviation=3.0, mode=MODE_BASELINE)
+SYSTEM_NETWORK_IN = Threshold(deviation=3.0, mode=MODE_BASELINE)
+SYSTEM_NETWORK_OUT = Threshold(deviation=3.0, mode=MODE_BASELINE)
 NETWORK_BYTES_IN = Threshold(deviation=3.0, mode=MODE_BASELINE)
 NETWORK_BYTES_OUT = Threshold(deviation=3.0, mode=MODE_BASELINE)
 NETWORK_NUM_REQUESTS = Threshold(deviation=3.0, mode=MODE_BASELINE)
@@ -88,16 +86,13 @@ DISK_PARTITION_IOPS_WRITE = Threshold(red=950, direction=DIR_ABOVE, mode=MODE_AB
 DISK_PARTITION_SPACE_PERCENT_FREE = Threshold(
     red=10.0, warn=20.0, direction=DIR_BELOW, mode=MODE_ABSOLUTE,
 )
-DISK_PARTITION_QUEUE_DEPTH = Threshold(
-    red=10, warn=5, direction=DIR_ABOVE, deviation=3.0, mode=MODE_OR,
-)
 
 # ---------------------------------------------------------------------------
 # Section 4: Cache Resources
 # ---------------------------------------------------------------------------
 
-CACHE_FILL_RATIO = Threshold(red=95.0, warn=80.0, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
-DIRTY_FILL_RATIO = Threshold(red=5.0, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
+CACHE_USED_BYTES = Threshold(deviation=2.0, mode=MODE_BASELINE)
+CACHE_DIRTY_BYTES = Threshold(deviation=3.0, mode=MODE_BASELINE)
 CACHE_BYTES_READ_INTO = Threshold(deviation=3.0, mode=MODE_BASELINE)
 CACHE_BYTES_WRITTEN_FROM = Threshold(deviation=3.0, mode=MODE_BASELINE)
 
@@ -174,9 +169,8 @@ CONNECTIONS = Threshold(
 
 THRESHOLDS: dict[str, Threshold] = {
     # Section 1
-    "RESTARTS_IN_LAST_HOUR": RESTARTS_IN_LAST_HOUR,
-    "SYSTEM_NETWORK_BYTES_IN": SYSTEM_NETWORK_BYTES_IN,
-    "SYSTEM_NETWORK_BYTES_OUT": SYSTEM_NETWORK_BYTES_OUT,
+    "SYSTEM_NETWORK_IN": SYSTEM_NETWORK_IN,
+    "SYSTEM_NETWORK_OUT": SYSTEM_NETWORK_OUT,
     "NETWORK_BYTES_IN": NETWORK_BYTES_IN,
     "NETWORK_BYTES_OUT": NETWORK_BYTES_OUT,
     "NETWORK_NUM_REQUESTS": NETWORK_NUM_REQUESTS,
@@ -193,10 +187,9 @@ THRESHOLDS: dict[str, Threshold] = {
     "DISK_PARTITION_IOPS_READ": DISK_PARTITION_IOPS_READ,
     "DISK_PARTITION_IOPS_WRITE": DISK_PARTITION_IOPS_WRITE,
     "DISK_PARTITION_SPACE_PERCENT_FREE": DISK_PARTITION_SPACE_PERCENT_FREE,
-    "DISK_PARTITION_QUEUE_DEPTH": DISK_PARTITION_QUEUE_DEPTH,
     # Section 4
-    "CACHE_FILL_RATIO": CACHE_FILL_RATIO,
-    "DIRTY_FILL_RATIO": DIRTY_FILL_RATIO,
+    "CACHE_USED_BYTES": CACHE_USED_BYTES,
+    "CACHE_DIRTY_BYTES": CACHE_DIRTY_BYTES,
     "CACHE_BYTES_READ_INTO": CACHE_BYTES_READ_INTO,
     "CACHE_BYTES_WRITTEN_FROM": CACHE_BYTES_WRITTEN_FROM,
     # Section 5

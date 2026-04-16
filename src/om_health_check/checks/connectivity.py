@@ -18,8 +18,8 @@ from om_health_check.models import (
 
 # Host-level metrics to fetch
 _SYSTEM_NETWORK_METRICS = [
-    "SYSTEM_NETWORK_BYTES_IN",
-    "SYSTEM_NETWORK_BYTES_OUT",
+    "SYSTEM_NETWORK_IN",
+    "SYSTEM_NETWORK_OUT",
 ]
 
 _PROCESS_NETWORK_METRICS = [
@@ -28,7 +28,7 @@ _PROCESS_NETWORK_METRICS = [
     "NETWORK_NUM_REQUESTS",
 ]
 
-_HOST_METRICS = ["RESTARTS_IN_LAST_HOUR"] + _PROCESS_NETWORK_METRICS + _SYSTEM_NETWORK_METRICS
+_HOST_METRICS = _PROCESS_NETWORK_METRICS + _SYSTEM_NETWORK_METRICS
 
 
 def run(
@@ -84,28 +84,6 @@ def run(
             client.om, project_id, host.id, _HOST_METRICS
         )
 
-        # Host restarts — always INFO
-        current, baseline = metrics.get("RESTARTS_IN_LAST_HOUR", (None, None))
-        if current is not None and current > 0:
-            hs.checks.append(
-                Check(
-                    name="Host restarts",
-                    status=STATUS_INFO,
-                    value=current,
-                    message=f"Restart detected in last hour (count: {current:.0f}). "
-                    "Cannot distinguish planned vs unexpected.",
-                )
-            )
-        else:
-            hs.checks.append(
-                Check(
-                    name="Host restarts",
-                    status=STATUS_GREEN,
-                    value=current,
-                    message="No recent restarts",
-                )
-            )
-
         # Network metrics — baseline comparison
         for metric_name in _SYSTEM_NETWORK_METRICS + _PROCESS_NETWORK_METRICS:
             current, baseline = metrics.get(metric_name, (None, None))
@@ -115,7 +93,7 @@ def run(
                     name=metric_name,
                     status=result.status,
                     value=result.current_value,
-                    units="bytes" if "BYTES" in metric_name else "requests",
+                    units="bytes" if "NETWORK" in metric_name else "requests",
                     baseline_value=result.baseline_value,
                     baseline_deviation=result.deviation,
                     threshold=result.threshold.red if result.threshold else None,

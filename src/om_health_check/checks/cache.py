@@ -9,15 +9,15 @@ from om_health_check.client import HealthCheckClient
 from om_health_check.models import Check, HostSection, Section
 
 _CACHE_METRICS = [
-    "CACHE_FILL_RATIO",
-    "DIRTY_FILL_RATIO",
+    "CACHE_USED_BYTES",
+    "CACHE_DIRTY_BYTES",
     "CACHE_BYTES_READ_INTO",
     "CACHE_BYTES_WRITTEN_FROM",
 ]
 
 _UNITS = {
-    "CACHE_FILL_RATIO": "%",
-    "DIRTY_FILL_RATIO": "%",
+    "CACHE_USED_BYTES": "bytes",
+    "CACHE_DIRTY_BYTES": "bytes",
     "CACHE_BYTES_READ_INTO": "bytes",
     "CACHE_BYTES_WRITTEN_FROM": "bytes",
 }

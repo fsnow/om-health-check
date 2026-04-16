@@ -11,8 +11,8 @@ class TestCacheMetrics:
     @patch("om_health_check.checks.cache.fetch_host_metrics")
     def test_all_green(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = {
-            "CACHE_FILL_RATIO": (70.0, 68.0),
-            "DIRTY_FILL_RATIO": (2.0, 1.5),
+            "CACHE_USED_BYTES": (70.0, 68.0),
+            "CACHE_DIRTY_BYTES": (2.0, 1.5),
             "CACHE_BYTES_READ_INTO": (5000, 4500),
             "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
         }
@@ -23,46 +23,46 @@ class TestCacheMetrics:
         assert all(c.status == STATUS_GREEN for c in checks)
 
     @patch("om_health_check.checks.cache.fetch_host_metrics")
-    def test_cache_fill_red(self, mock_fetch, mock_client, cluster, primary):
+    def test_cache_used_spike_red(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = {
-            "CACHE_FILL_RATIO": (96.0, 90.0),  # > 95 = RED
-            "DIRTY_FILL_RATIO": (2.0, 1.5),
+            "CACHE_USED_BYTES": (5000000000, 2000000000),  # 2.5x > 2.0 deviation = RED
+            "CACHE_DIRTY_BYTES": (2000, 1500),
             "CACHE_BYTES_READ_INTO": (5000, 4500),
             "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
         }
         section = run(mock_client, "p1", cluster, [primary])
-        cache_check = [c for c in section.hosts[0].checks if c.name == "CACHE_FILL_RATIO"][0]
+        cache_check = [c for c in section.hosts[0].checks if c.name == "CACHE_USED_BYTES"][0]
         assert cache_check.status == STATUS_RED
 
     @patch("om_health_check.checks.cache.fetch_host_metrics")
-    def test_cache_fill_warn(self, mock_fetch, mock_client, cluster, primary):
+    def test_cache_used_normal_green(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = {
-            "CACHE_FILL_RATIO": (85.0, 80.0),  # > 80 warn, < 95 red = WARN
-            "DIRTY_FILL_RATIO": (2.0, 1.5),
+            "CACHE_USED_BYTES": (3000000000, 2800000000),  # 1.07x < 2.0 = GREEN
+            "CACHE_DIRTY_BYTES": (2000, 1500),
             "CACHE_BYTES_READ_INTO": (5000, 4500),
             "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
         }
         section = run(mock_client, "p1", cluster, [primary])
-        cache_check = [c for c in section.hosts[0].checks if c.name == "CACHE_FILL_RATIO"][0]
-        assert cache_check.status == STATUS_WARN
+        cache_check = [c for c in section.hosts[0].checks if c.name == "CACHE_USED_BYTES"][0]
+        assert cache_check.status == STATUS_GREEN
 
     @patch("om_health_check.checks.cache.fetch_host_metrics")
-    def test_dirty_fill_red(self, mock_fetch, mock_client, cluster, primary):
+    def test_dirty_bytes_spike_red(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = {
-            "CACHE_FILL_RATIO": (70.0, 68.0),
-            "DIRTY_FILL_RATIO": (8.0, 3.0),  # > 5 = RED
+            "CACHE_USED_BYTES": (3000000000, 2800000000),
+            "CACHE_DIRTY_BYTES": (90000000, 20000000),  # 4.5x > 3.0 deviation = RED
             "CACHE_BYTES_READ_INTO": (5000, 4500),
             "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
         }
         section = run(mock_client, "p1", cluster, [primary])
-        dirty_check = [c for c in section.hosts[0].checks if c.name == "DIRTY_FILL_RATIO"][0]
+        dirty_check = [c for c in section.hosts[0].checks if c.name == "CACHE_DIRTY_BYTES"][0]
         assert dirty_check.status == STATUS_RED
 
     @patch("om_health_check.checks.cache.fetch_host_metrics")
     def test_cache_bytes_deviation_red(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = {
-            "CACHE_FILL_RATIO": (70.0, 68.0),
-            "DIRTY_FILL_RATIO": (2.0, 1.5),
+            "CACHE_USED_BYTES": (70.0, 68.0),
+            "CACHE_DIRTY_BYTES": (2.0, 1.5),
             "CACHE_BYTES_READ_INTO": (20000, 5000),  # 4x > 3.0 = RED (baseline mode)
             "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
         }
@@ -73,8 +73,8 @@ class TestCacheMetrics:
     @patch("om_health_check.checks.cache.fetch_host_metrics")
     def test_no_data_info(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = {
-            "CACHE_FILL_RATIO": (None, None),
-            "DIRTY_FILL_RATIO": (None, None),
+            "CACHE_USED_BYTES": (None, None),
+            "CACHE_DIRTY_BYTES": (None, None),
             "CACHE_BYTES_READ_INTO": (None, None),
             "CACHE_BYTES_WRITTEN_FROM": (None, None),
         }
@@ -85,8 +85,8 @@ class TestCacheMetrics:
     @patch("om_health_check.checks.cache.fetch_host_metrics")
     def test_multiple_hosts(self, mock_fetch, mock_client, cluster, three_hosts):
         mock_fetch.return_value = {
-            "CACHE_FILL_RATIO": (70.0, 68.0),
-            "DIRTY_FILL_RATIO": (2.0, 1.5),
+            "CACHE_USED_BYTES": (70.0, 68.0),
+            "CACHE_DIRTY_BYTES": (2.0, 1.5),
             "CACHE_BYTES_READ_INTO": (5000, 4500),
             "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
         }

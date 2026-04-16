@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+from opsmanager.errors import OpsManagerAuthenticationError, OpsManagerForbiddenError
+
 from om_health_check.client import HealthCheckClient
 from om_health_check.config import Config
 from om_health_check.models import (
@@ -16,6 +18,11 @@ from om_health_check.models import (
 from om_health_check.checks import connectivity, compute, disk, cache, workload
 from om_health_check.checks import replication, connections, backup, version
 from om_health_check.renderers import txt, json_renderer, html
+
+_PERMISSION_HINT = (
+    "The API key requires the Project Read Only role. "
+    "See: https://www.mongodb.com/docs/ops-manager/current/reference/user-roles/"
+)
 
 # Ordered list of check sections
 CHECK_SECTIONS = [
@@ -39,12 +46,21 @@ RENDERERS = {
 
 def run(config: Config) -> Report:
     """Run health checks and render output."""
+    # Reset per-run state
+    from om_health_check.baseline import _warned_metrics
+    _warned_metrics.clear()
+
     report = Report(om_url=config.om_url)
 
     try:
         client = HealthCheckClient(config)
     except Exception as exc:
         # Client init failure — connectivity RED
+        message = f"Failed to connect: {exc}"
+        if isinstance(exc, OpsManagerAuthenticationError):
+            message = f"Authentication failed — check OPS_MANAGER_USER and OPS_MANAGER_API_KEY. {exc}"
+        elif isinstance(exc, OpsManagerForbiddenError):
+            message = f"Access denied. {_PERMISSION_HINT} ({exc})"
         cluster_report = ClusterReport(
             cluster_name="N/A",
             cluster_id="N/A",
@@ -58,7 +74,7 @@ def run(config: Config) -> Report:
                     Check(
                         name="OM API reachability",
                         status=STATUS_RED,
-                        message=f"Failed to connect: {exc}",
+                        message=message,
                     )
                 ],
             )
@@ -71,6 +87,27 @@ def run(config: Config) -> Report:
         for project_name in config.project_names:
             try:
                 project = client.resolve_project(project_name)
+            except (OpsManagerAuthenticationError, OpsManagerForbiddenError) as exc:
+                cluster_report = ClusterReport(
+                    cluster_name="N/A",
+                    cluster_id="N/A",
+                    project_name=project_name,
+                    project_id="N/A",
+                )
+                cluster_report.sections.append(
+                    Section(
+                        name="Connectivity & Infrastructure",
+                        cluster_checks=[
+                            Check(
+                                name="Project resolution",
+                                status=STATUS_RED,
+                                message=f"Permission denied for project '{project_name}'. {_PERMISSION_HINT}",
+                            )
+                        ],
+                    )
+                )
+                report.clusters.append(cluster_report)
+                continue
             except Exception as exc:
                 cluster_report = ClusterReport(
                     cluster_name="N/A",
@@ -161,6 +198,19 @@ def _check_cluster(client, project, cluster) -> ClusterReport:
         try:
             section = check_fn(client, project.id, cluster, hosts)
             cr.sections.append(section)
+        except (OpsManagerAuthenticationError, OpsManagerForbiddenError) as exc:
+            cr.sections.append(
+                Section(
+                    name=section_name,
+                    cluster_checks=[
+                        Check(
+                            name=section_name,
+                            status=STATUS_RED,
+                            message=f"Permission denied for {section_name}. {_PERMISSION_HINT}",
+                        )
+                    ],
+                )
+            )
         except Exception as exc:
             cr.sections.append(
                 Section(

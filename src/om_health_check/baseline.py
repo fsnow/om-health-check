@@ -6,9 +6,14 @@ and evaluates status using threshold configuration.
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
+# Suppress per-request error logs from the opsmanager library during fallback fetching;
+# we handle and summarize failures ourselves.
+logging.getLogger("opsmanager.network").setLevel(logging.CRITICAL)
 
 from opsmanager import OpsManagerClient
 from opsmanager.types import Measurement, ProcessMeasurements
@@ -229,6 +234,9 @@ def _extract_latest_value(measurements: ProcessMeasurements, metric_name: str) -
     return None
 
 
+_warned_metrics: set[str] = set()
+
+
 def _fetch_with_fallback(fetch_fn, metric_names: list[str], **kwargs):
     """Try a batched metric fetch; on failure, fall back to per-metric calls.
 
@@ -241,8 +249,7 @@ def _fetch_with_fallback(fetch_fn, metric_names: list[str], **kwargs):
             granularity="PT1H", period="PT1H",
             metrics=metric_names, **kwargs,
         )
-    except Exception as exc:
-        print(f"Batch metric fetch failed, falling back to per-metric: {exc}", file=sys.stderr)
+    except Exception:
         current = _fetch_individually(fetch_fn, metric_names, **kwargs)
 
     try:
@@ -251,8 +258,7 @@ def _fetch_with_fallback(fetch_fn, metric_names: list[str], **kwargs):
             start=baseline_start, end=baseline_end,
             metrics=metric_names, **kwargs,
         )
-    except Exception as exc:
-        print(f"Batch baseline fetch failed, falling back to per-metric: {exc}", file=sys.stderr)
+    except Exception:
         baseline = _fetch_individually(
             fetch_fn, metric_names,
             start=baseline_start, end=baseline_end, **kwargs,
@@ -281,8 +287,11 @@ def _fetch_individually(fetch_fn, metric_names: list[str], start=None, end=None,
             all_measurements.extend(result.measurements)
         except Exception:
             failed.append(name)
-    if failed:
-        print(f"Metrics unavailable: {', '.join(failed)}", file=sys.stderr)
+    # Only warn once per metric name across the entire run
+    new_failures = [m for m in failed if m not in _warned_metrics]
+    if new_failures:
+        _warned_metrics.update(new_failures)
+        print(f"Metrics unavailable: {', '.join(new_failures)}", file=sys.stderr)
     return _FallbackMeasurements(all_measurements)
 
 

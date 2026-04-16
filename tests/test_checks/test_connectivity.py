@@ -7,6 +7,12 @@ from om_health_check.models import STATUS_GREEN, STATUS_RED, STATUS_INFO
 from tests.conftest import make_agent, make_alert
 
 
+_MOCK_METRICS = {k: (None, None) for k in [
+    "SYSTEM_NETWORK_IN", "SYSTEM_NETWORK_OUT",
+    "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
+]}
+
+
 class TestOMReachability:
     def test_always_green(self, mock_client, cluster, primary):
         section = run(mock_client, "p1", cluster, [primary])
@@ -18,10 +24,7 @@ class TestOMReachability:
 class TestActiveAlerts:
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_no_alerts_green(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         section = run(mock_client, "p1", cluster, [primary])
         alert_checks = [c for c in section.cluster_checks if "alert" in c.name.lower()]
         assert len(alert_checks) == 1
@@ -29,10 +32,7 @@ class TestActiveAlerts:
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_matching_alert_red(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         mock_client.om.alerts.list_open.return_value = [
             make_alert(hostname_and_port="mongo1.example.com:27017"),
         ]
@@ -43,10 +43,7 @@ class TestActiveAlerts:
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_unrelated_alert_not_shown(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         mock_client.om.alerts.list_open.return_value = [
             make_alert(hostname_and_port="other-host:27017", cluster_name="other-cluster"),
         ]
@@ -59,10 +56,7 @@ class TestActiveAlerts:
 class TestAgentStatus:
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_active_agent_green(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         mock_client.om.agents.list_monitoring.return_value = [
             make_agent(hostname="mongo1.example.com", state_name="ACTIVE"),
         ]
@@ -72,10 +66,7 @@ class TestAgentStatus:
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_standby_agent_red(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         mock_client.om.agents.list_monitoring.return_value = [
             make_agent(hostname="mongo1.example.com", state_name="STANDBY", last_ping="2026-04-01T00:00:00Z"),
         ]
@@ -85,10 +76,7 @@ class TestAgentStatus:
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_no_agents_red(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         section = run(mock_client, "p1", cluster, [primary])
         agent_checks = [c for c in section.cluster_checks if c.name == "Agent status"]
         assert agent_checks[0].status == STATUS_RED
@@ -98,10 +86,7 @@ class TestAgentStatus:
 class TestNodeStatus:
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_healthy_node_green(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         section = run(mock_client, "p1", cluster, [primary])
         node_checks = [c for hs in section.hosts for c in hs.checks if c.name == "Node status"]
         assert node_checks[0].status == STATUS_GREEN
@@ -110,10 +95,7 @@ class TestNodeStatus:
     def test_disabled_node_red(self, mock_fetch, mock_client, cluster):
         from tests.conftest import make_host
         host = make_host(host_enabled=False)
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         section = run(mock_client, "p1", cluster, [host])
         node_checks = [c for hs in section.hosts for c in hs.checks if c.name == "Node status"]
         assert node_checks[0].status == STATUS_RED
@@ -122,10 +104,7 @@ class TestNodeStatus:
     def test_down_node_red(self, mock_fetch, mock_client, cluster):
         from tests.conftest import make_host
         host = make_host(replica_state_name="DOWN")
-        mock_fetch.return_value = {k: (None, None) for k in [
-            "RESTARTS_IN_LAST_HOUR", "SYSTEM_NETWORK_BYTES_IN", "SYSTEM_NETWORK_BYTES_OUT",
-            "NETWORK_BYTES_IN", "NETWORK_BYTES_OUT", "NETWORK_NUM_REQUESTS",
-        ]}
+        mock_fetch.return_value = _MOCK_METRICS
         section = run(mock_client, "p1", cluster, [host])
         node_checks = [c for hs in section.hosts for c in hs.checks if c.name == "Node status"]
         assert node_checks[0].status == STATUS_RED

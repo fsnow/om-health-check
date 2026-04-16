@@ -26,6 +26,14 @@ pip install om-health-check
 
 Requires Python 3.10+.
 
+## API key permissions
+
+The API key must have the **Project Read Only** role on each project being checked. This provides read access to deployments, measurements, alerts, agents, backup status, and Performance Advisor data.
+
+No write permissions are required. The tool never modifies any Ops Manager configuration.
+
+If the API key lacks sufficient permissions, affected sections will report a RED status with a message indicating which permission is missing.
+
 ## Usage
 
 ```bash

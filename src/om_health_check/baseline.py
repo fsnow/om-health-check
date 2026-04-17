@@ -124,6 +124,10 @@ def evaluate_metric(
     abs_warn = _crosses_warn(current_value, thresh)
     dev_red = _exceeds_deviation(current_value, baseline_value, thresh)
 
+    # Baseline missing (cluster < 1 week old, or metric wasn't collected then).
+    # Degrade gracefully per mode.
+    baseline_missing = baseline_value is None and thresh.deviation is not None
+
     if thresh.mode == MODE_ABSOLUTE:
         if abs_red:
             status = STATUS_RED
@@ -133,10 +137,24 @@ def evaluate_metric(
             status = STATUS_GREEN
 
     elif thresh.mode == MODE_BASELINE:
+        if baseline_missing:
+            # Can't evaluate — no fallback threshold for pure baseline metrics
+            return MetricResult(
+                metric_name=metric_name,
+                current_value=current_value,
+                baseline_value=None,
+                deviation=None,
+                status=STATUS_INFO,
+                threshold=thresh,
+                message=f"{current_value:,.2f} — no baseline yet (cluster < 1 week old)",
+            )
         status = STATUS_RED if dev_red else STATUS_GREEN
 
     elif thresh.mode == MODE_AND:
-        if abs_red and dev_red:
+        if baseline_missing:
+            # Degrade to threshold-only
+            status = STATUS_WARN if abs_red else (STATUS_WARN if abs_warn else STATUS_GREEN)
+        elif abs_red and dev_red:
             status = STATUS_RED
         elif abs_red and not dev_red:
             # Above threshold but within normal baseline — suppress to INFO
@@ -158,6 +176,8 @@ def evaluate_metric(
         status = STATUS_GREEN
 
     message = _build_message(metric_name, current_value, baseline_value, deviation, thresh, status)
+    if baseline_missing and thresh.mode in (MODE_AND, MODE_OR):
+        message += " (no baseline yet — cluster < 1 week old)"
 
     return MetricResult(
         metric_name=metric_name,
@@ -224,13 +244,20 @@ def _baseline_time_range() -> tuple[str, str]:
     return baseline_start.isoformat(), baseline_end.isoformat()
 
 
-def _extract_latest_value(measurements: ProcessMeasurements, metric_name: str) -> float | None:
-    """Extract the most recent non-null data point for a metric from measurements."""
+def _extract_value(measurements: ProcessMeasurements, metric_name: str) -> float | None:
+    """Extract the mean of non-null data points for a metric from measurements.
+
+    For current values (PT1M granularity, ~60 samples), this produces a 1-hour average.
+    For baseline values (PT1H granularity, 1 sample), the mean equals that single value.
+    Averaging makes the current vs baseline comparison apples-to-apples (1h avg vs 1h avg)
+    rather than noisy (1m point vs 1h avg).
+    """
     for m in measurements.measurements:
         if m.name == metric_name:
-            for dp in reversed(m.data_points):
-                if dp.value is not None:
-                    return dp.value
+            values = [dp.value for dp in m.data_points if dp.value is not None]
+            if not values:
+                return None
+            return sum(values) / len(values)
     return None
 
 
@@ -240,13 +267,17 @@ _warned_metrics: set[str] = set()
 def _fetch_with_fallback(fetch_fn, metric_names: list[str], **kwargs):
     """Try a batched metric fetch; on failure, fall back to per-metric calls.
 
+    Current values are fetched at PT1M granularity over PT1H — finer resolution
+    catches recent values even when OM's PT1H rollup lags (e.g., new clusters).
+    Baseline values use PT1H — historical data is rolled up.
+
     Returns a pair (current_measurements, baseline_measurements).
     """
     baseline_start, baseline_end = _baseline_time_range()
 
     try:
         current = fetch_fn(
-            granularity="PT1H", period="PT1H",
+            granularity="PT1M", period="PT1H",
             metrics=metric_names, **kwargs,
         )
     except Exception:
@@ -281,7 +312,7 @@ def _fetch_individually(fetch_fn, metric_names: list[str], start=None, end=None,
                 )
             else:
                 result = fetch_fn(
-                    granularity="PT1H", period="PT1H",
+                    granularity="PT1M", period="PT1H",
                     metrics=[name], **kwargs,
                 )
             all_measurements.extend(result.measurements)
@@ -321,8 +352,8 @@ def fetch_host_metrics(
     result = {}
     for name in metric_names:
         result[name] = (
-            _extract_latest_value(current, name),
-            _extract_latest_value(baseline, name),
+            _extract_value(current, name),
+            _extract_value(baseline, name),
         )
     return result
 
@@ -348,7 +379,7 @@ def fetch_disk_metrics(
     result = {}
     for name in metric_names:
         result[name] = (
-            _extract_latest_value(current, name),
-            _extract_latest_value(baseline, name),
+            _extract_value(current, name),
+            _extract_value(baseline, name),
         )
     return result

@@ -27,7 +27,12 @@ def worst_status(*statuses: str) -> str:
 
 @dataclass
 class Check:
-    """A single health check result."""
+    """A single health check result.
+
+    ``rollup=False`` means the check is shown in the report but excluded from
+    section/cluster/overall status. Use for advisory items that shouldn't color
+    the overall report (e.g. informational alerts about external config).
+    """
 
     name: str
     status: str
@@ -37,6 +42,7 @@ class Check:
     baseline_value: float | None = None
     baseline_deviation: float | None = None
     message: str = ""
+    rollup: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -61,9 +67,12 @@ class HostSection:
 
     @property
     def status(self) -> str:
-        if not self.checks:
+        # INFO is informational and never bubbles up. Individual checks can
+        # also opt out via rollup=False (escape hatch for suppressed WARN/RED).
+        rollup_checks = [c for c in self.checks if c.rollup and c.status != STATUS_INFO]
+        if not rollup_checks:
             return STATUS_GREEN
-        return worst_status(*(c.status for c in self.checks))
+        return worst_status(*(c.status for c in rollup_checks))
 
     def to_dict(self) -> dict:
         return {
@@ -83,7 +92,11 @@ class Section:
 
     @property
     def status(self) -> str:
-        statuses = [h.status for h in self.hosts] + [c.status for c in self.cluster_checks]
+        rollup_cluster_checks = [
+            c.status for c in self.cluster_checks
+            if c.rollup and c.status != STATUS_INFO
+        ]
+        statuses = [h.status for h in self.hosts] + rollup_cluster_checks
         if not statuses:
             return STATUS_GREEN
         return worst_status(*statuses)

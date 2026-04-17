@@ -10,10 +10,21 @@ from om_health_check.models import (
     STATUS_GREEN,
     STATUS_INFO,
     STATUS_RED,
+    STATUS_WARN,
     Check,
     HostSection,
     Section,
 )
+
+# Alert types that are advisory (configuration recommendations) rather than
+# operational problems. Downgraded from RED to INFO.
+#
+# HOST_SECURITY_CHECKUP_NOT_MET fires when OM cannot verify that a host is
+# using authentication/TLS. External auth (LDAP, Kerberos) often appears as
+# "no auth" to this check even when properly configured.
+_ADVISORY_ALERT_TYPES = {
+    "HOST_SECURITY_CHECKUP_NOT_MET",
+}
 
 
 # Host-level metrics to fetch
@@ -127,10 +138,11 @@ def _check_alerts(
 
     if cluster_alerts:
         for alert in cluster_alerts:
+            is_advisory = alert.event_type_name in _ADVISORY_ALERT_TYPES
             section.cluster_checks.append(
                 Check(
                     name="Active alert",
-                    status=STATUS_RED,
+                    status=STATUS_INFO if is_advisory else STATUS_RED,
                     message=(
                         f"[{alert.event_type_name}] "
                         f"{alert.hostname_and_port or alert.cluster_name or ''} — "
@@ -171,14 +183,23 @@ def _check_agents(
         )
         return
 
-    for agent in cluster_agents:
-        if agent.state_name == "ACTIVE":
-            status = STATUS_GREEN
-            msg = f"{agent.hostname}: ACTIVE"
-        else:
-            status = STATUS_RED
-            msg = f"{agent.hostname}: {agent.state_name} (last ping: {agent.last_ping})"
-
+    # OM monitoring uses leader election: exactly one agent per project is ACTIVE,
+    # the rest are STANDBY (ready to take over). Missing an active agent is RED.
+    active_agents = [a for a in cluster_agents if a.state_name == "ACTIVE"]
+    if not active_agents:
         section.cluster_checks.append(
-            Check(name="Agent status", status=status, message=msg)
+            Check(
+                name="Agent status",
+                status=STATUS_RED,
+                message="No ACTIVE monitoring agent — monitoring data is not being collected",
+            )
+        )
+    else:
+        active_hosts = ", ".join(a.hostname for a in active_agents)
+        standby_count = len(cluster_agents) - len(active_agents)
+        msg = f"Active on {active_hosts}"
+        if standby_count:
+            msg += f" ({standby_count} standby)"
+        section.cluster_checks.append(
+            Check(name="Agent status", status=STATUS_GREEN, message=msg)
         )

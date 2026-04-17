@@ -1,0 +1,26 @@
+# Smoke-test config: aggressively low thresholds designed to trigger RED on a
+# healthy cluster. Use to verify the tool runs end-to-end and produces expected
+# status rollup for each mode (absolute, baseline, or). Not for production use.
+#
+# Invoke with: om-health-check --config examples/low-thresholds.yaml ...
+
+thresholds:
+  # Connections: primary has ~40, set red=30 to trigger
+  CONNECTIONS:
+    red: 30
+    warn: 20
+
+  # Disk space: 98% free, set red=99 (below) to trigger
+  DISK_PARTITION_SPACE_PERCENT_FREE:
+    red: 99.0
+    warn: 99.5
+
+  # Oplog window: 75,617h, set red=80000 (below) to trigger
+  OPLOG_MASTER_TIME:
+    red: 80000
+    warn: 90000
+
+  # Global lock queues: currently 0, set deviation low to test baseline mode
+  GLOBAL_LOCK_CURRENT_QUEUE_TOTAL:
+    red: 0
+    warn: 0

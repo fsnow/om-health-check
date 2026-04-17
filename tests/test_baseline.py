@@ -14,7 +14,7 @@ from om_health_check.baseline import (
     _fetch_with_fallback,
     _fetch_individually,
     _FallbackMeasurements,
-    _extract_latest_value,
+    _extract_value,
     fetch_host_metrics,
     fetch_disk_metrics,
 )
@@ -224,8 +224,10 @@ class TestModeBaseline:
         assert r.status == STATUS_GREEN
 
     def test_no_baseline(self):
+        # Cluster < 1 week old — explicit INFO with message
         r = evaluate_metric("OPCOUNTER_QUERY", 10000, None)
-        assert r.status == STATUS_GREEN  # can't compare, default green
+        assert r.status == STATUS_INFO
+        assert "no baseline yet" in r.message.lower()
 
     def test_zero_baseline_nonzero_current(self):
         r = evaluate_metric("OPCOUNTER_QUERY", 100, 0)
@@ -354,6 +356,46 @@ class TestModeOr:
 
 
 # ---------------------------------------------------------------------------
+# evaluate_metric — missing baseline (cluster < 1 week old)
+# ---------------------------------------------------------------------------
+
+
+class TestMissingBaseline:
+    def test_baseline_mode_info(self):
+        # MODE_BASELINE with no baseline → INFO with explanation
+        r = evaluate_metric("OPCOUNTER_QUERY", 5000, None)
+        assert r.status == STATUS_INFO
+        assert "no baseline yet" in r.message.lower()
+
+    def test_and_mode_degrades_to_threshold_over(self):
+        # MODE_AND, over threshold, no baseline → WARN (can't confirm deviation)
+        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 97.0, None)
+        assert r.status == STATUS_WARN
+        assert "no baseline yet" in r.message.lower()
+
+    def test_and_mode_degrades_to_threshold_under(self):
+        # MODE_AND, under threshold, no baseline → GREEN
+        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 40.0, None)
+        assert r.status == STATUS_GREEN
+
+    def test_or_mode_threshold_still_works(self):
+        # MODE_OR with threshold crossed → still RED even without baseline
+        r = evaluate_metric("CONNECTIONS", 30000, None)
+        assert r.status == STATUS_RED
+        assert "no baseline yet" in r.message.lower()
+
+    def test_or_mode_under_threshold_green(self):
+        # MODE_OR under threshold, no baseline → GREEN (can't check deviation)
+        r = evaluate_metric("CONNECTIONS", 1000, None)
+        assert r.status == STATUS_GREEN
+
+    def test_absolute_mode_unaffected(self):
+        # MODE_ABSOLUTE never needs baseline
+        r = evaluate_metric("SWAP_USAGE_USED", 50, None)
+        assert r.status == STATUS_GREEN
+
+
+# ---------------------------------------------------------------------------
 # evaluate_metric — edge cases
 # ---------------------------------------------------------------------------
 
@@ -391,25 +433,25 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _extract_latest_value
+# _extract_value
 # ---------------------------------------------------------------------------
 
 
-class TestExtractLatestValue:
-    def test_extracts_last_non_null(self):
+class TestExtractValue:
+    def test_single_non_null(self):
         dp1 = MagicMock(value=None)
         dp2 = MagicMock(value=42.0)
         dp3 = MagicMock(value=None)
-        m = MagicMock(name="CPU", data_points=[dp1, dp2, dp3])
+        m = MagicMock(data_points=[dp1, dp2, dp3])
         m.name = "CPU"
         measurements = MagicMock(measurements=[m])
-        assert _extract_latest_value(measurements, "CPU") == 42.0
+        assert _extract_value(measurements, "CPU") == 42.0
 
     def test_returns_none_for_missing_metric(self):
-        m = MagicMock(name="CPU", data_points=[])
+        m = MagicMock(data_points=[])
         m.name = "CPU"
         measurements = MagicMock(measurements=[m])
-        assert _extract_latest_value(measurements, "DISK") is None
+        assert _extract_value(measurements, "DISK") is None
 
     def test_returns_none_for_all_null_datapoints(self):
         dp1 = MagicMock(value=None)
@@ -417,16 +459,26 @@ class TestExtractLatestValue:
         m = MagicMock(data_points=[dp1, dp2])
         m.name = "CPU"
         measurements = MagicMock(measurements=[m])
-        assert _extract_latest_value(measurements, "CPU") is None
+        assert _extract_value(measurements, "CPU") is None
 
-    def test_prefers_latest_value(self):
+    def test_averages_non_null_values(self):
+        # Hourly average over PT1M samples: 10, 20, 30 -> 20.0
         dp1 = MagicMock(value=10.0)
         dp2 = MagicMock(value=20.0)
         dp3 = MagicMock(value=30.0)
         m = MagicMock(data_points=[dp1, dp2, dp3])
         m.name = "CPU"
         measurements = MagicMock(measurements=[m])
-        assert _extract_latest_value(measurements, "CPU") == 30.0
+        assert _extract_value(measurements, "CPU") == 20.0
+
+    def test_averages_skipping_nulls(self):
+        dp1 = MagicMock(value=10.0)
+        dp2 = MagicMock(value=None)
+        dp3 = MagicMock(value=30.0)
+        m = MagicMock(data_points=[dp1, dp2, dp3])
+        m.name = "CPU"
+        measurements = MagicMock(measurements=[m])
+        assert _extract_value(measurements, "CPU") == 20.0
 
 
 # ---------------------------------------------------------------------------

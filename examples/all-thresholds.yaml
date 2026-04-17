@@ -1,0 +1,298 @@
+# Reference: all metric thresholds with their built-in defaults.
+#
+# Copy this file, delete the metrics you don't want to override, and edit the
+# rest. Unspecified fields on overridden metrics retain their defaults.
+#
+# Fields:
+#   red        — value that triggers RED status (null = no absolute threshold)
+#   warn       — value that triggers WARN status (null = no WARN threshold)
+#   direction  — "above" (RED when value >= red) or "below" (RED when value <= red)
+#   deviation  — baseline multiplier (e.g. 3.0 = RED if current >= 3x baseline)
+#   mode       — absolute | baseline | and | or  (see README for semantics)
+
+thresholds:
+
+  # -----------------------------------------------------------------------
+  # Section 1: Connectivity & Infrastructure
+  # -----------------------------------------------------------------------
+
+  # System-level network throughput (host-wide, includes non-mongod traffic).
+  SYSTEM_NETWORK_IN:
+    deviation: 3.0
+    mode: baseline
+
+  SYSTEM_NETWORK_OUT:
+    deviation: 3.0
+    mode: baseline
+
+  # mongod process-level network bytes and request count.
+  NETWORK_BYTES_IN:
+    deviation: 3.0
+    mode: baseline
+
+  NETWORK_BYTES_OUT:
+    deviation: 3.0
+    mode: baseline
+
+  NETWORK_NUM_REQUESTS:
+    deviation: 3.0
+    mode: baseline
+
+  # -----------------------------------------------------------------------
+  # Section 2: Compute Resources
+  # -----------------------------------------------------------------------
+
+  # CPU user% — RED only if above 95 AND 2x baseline (suppresses stable high load).
+  SYSTEM_NORMALIZED_CPU_USER:
+    red: 95.0
+    warn: 80.0
+    direction: above
+    deviation: 2.0
+    mode: and
+
+  # CPU iowait% — RED only if above 20 AND 3x baseline.
+  SYSTEM_NORMALIZED_CPU_IOWAIT:
+    red: 20.0
+    warn: 10.0
+    direction: above
+    deviation: 3.0
+    mode: and
+
+  # mongod process CPU% — RED only if above 80 AND 2x baseline.
+  PROCESS_NORMALIZED_CPU_USER:
+    red: 80.0
+    direction: above
+    deviation: 2.0
+    mode: and
+
+  # Available memory (MB). Direction=below. RED if under 500 OR dropped to 30% of baseline.
+  SYSTEM_MEMORY_AVAILABLE:
+    red: 500
+    warn: 1000
+    direction: below
+    deviation: 0.3
+    mode: or
+
+  # mongod resident memory (MB) — baseline-only (absolute size varies wildly).
+  MEMORY_RESIDENT:
+    deviation: 2.0
+    mode: baseline
+
+  # Swap used (MB) — any swap over 100MB is a hard RED.
+  SWAP_USAGE_USED:
+    red: 100
+    direction: above
+    mode: absolute
+
+  # -----------------------------------------------------------------------
+  # Section 3: Disk Resources
+  # -----------------------------------------------------------------------
+
+  # Disk read/write latency (ms) — RED if above 10 OR 3x baseline.
+  DISK_PARTITION_LATENCY_READ:
+    red: 10.0
+    warn: 5.0
+    direction: above
+    deviation: 3.0
+    mode: or
+
+  DISK_PARTITION_LATENCY_WRITE:
+    red: 10.0
+    warn: 5.0
+    direction: above
+    deviation: 3.0
+    mode: or
+
+  # Disk IOPS — RED above 950 (assumes gp2/gp3 IOPS ceiling near 1000).
+  DISK_PARTITION_IOPS_READ:
+    red: 950
+    direction: above
+    mode: absolute
+
+  DISK_PARTITION_IOPS_WRITE:
+    red: 950
+    direction: above
+    mode: absolute
+
+  # Disk free space (%) — direction=below. RED below 10%, WARN below 20%.
+  DISK_PARTITION_SPACE_PERCENT_FREE:
+    red: 10.0
+    warn: 20.0
+    direction: below
+    mode: absolute
+
+  # -----------------------------------------------------------------------
+  # Section 4: Cache Resources
+  # -----------------------------------------------------------------------
+
+  # WiredTiger cache used/dirty in bytes. Baseline-only because absolute
+  # thresholds require knowing the configured cache size, which isn't available
+  # via the read-only OM API.
+  CACHE_USED_BYTES:
+    deviation: 2.0
+    mode: baseline
+
+  CACHE_DIRTY_BYTES:
+    deviation: 3.0
+    mode: baseline
+
+  CACHE_BYTES_READ_INTO:
+    deviation: 3.0
+    mode: baseline
+
+  CACHE_BYTES_WRITTEN_FROM:
+    deviation: 3.0
+    mode: baseline
+
+  # -----------------------------------------------------------------------
+  # Section 5: Database Activity & Workload
+  # -----------------------------------------------------------------------
+
+  # Query targeting — RED only if ratio > 1000 AND 2x baseline.
+  QUERY_TARGETING_SCANNED_PER_RETURNED:
+    red: 1000
+    direction: above
+    deviation: 2.0
+    mode: and
+
+  QUERY_TARGETING_SCANNED_OBJECTS_PER_RETURNED:
+    red: 1000
+    direction: above
+    deviation: 2.0
+    mode: and
+
+  # Query executor scan rates — baseline-only.
+  QUERY_EXECUTOR_SCANNED:
+    deviation: 3.0
+    mode: baseline
+
+  QUERY_EXECUTOR_SCANNED_OBJECTS:
+    deviation: 3.0
+    mode: baseline
+
+  # Document throughput — baseline-only.
+  DOCUMENT_METRICS_RETURNED:
+    deviation: 3.0
+    mode: baseline
+
+  DOCUMENT_METRICS_INSERTED:
+    deviation: 3.0
+    mode: baseline
+
+  DOCUMENT_METRICS_UPDATED:
+    deviation: 3.0
+    mode: baseline
+
+  DOCUMENT_METRICS_DELETED:
+    deviation: 3.0
+    mode: baseline
+
+  # In-memory sort operations — baseline-only spike detection.
+  OPERATIONS_SCAN_AND_ORDER:
+    deviation: 3.0
+    mode: baseline
+
+  # Opcounters — baseline-only; absolute levels depend heavily on workload.
+  OPCOUNTER_CMD:
+    deviation: 3.0
+    mode: baseline
+
+  OPCOUNTER_QUERY:
+    deviation: 3.0
+    mode: baseline
+
+  OPCOUNTER_UPDATE:
+    deviation: 3.0
+    mode: baseline
+
+  OPCOUNTER_DELETE:
+    deviation: 3.0
+    mode: baseline
+
+  OPCOUNTER_GETMORE:
+    deviation: 3.0
+    mode: baseline
+
+  OPCOUNTER_INSERT:
+    deviation: 3.0
+    mode: baseline
+
+  # Average operation execution time (ms) — RED if above 100 OR 2x baseline.
+  OP_EXECUTION_TIME_READS:
+    red: 100
+    warn: 50
+    direction: above
+    deviation: 2.0
+    mode: or
+
+  OP_EXECUTION_TIME_WRITES:
+    red: 100
+    warn: 50
+    direction: above
+    deviation: 2.0
+    mode: or
+
+  OP_EXECUTION_TIME_COMMANDS:
+    red: 100
+    warn: 50
+    direction: above
+    deviation: 2.0
+    mode: or
+
+  # Global lock queue depth — RED if sustained queuing (> 10 readers or writers,
+  # > 20 total) OR 3x baseline.
+  GLOBAL_LOCK_CURRENT_QUEUE_READERS:
+    red: 10
+    warn: 5
+    direction: above
+    deviation: 3.0
+    mode: or
+
+  GLOBAL_LOCK_CURRENT_QUEUE_WRITERS:
+    red: 10
+    warn: 5
+    direction: above
+    deviation: 3.0
+    mode: or
+
+  GLOBAL_LOCK_CURRENT_QUEUE_TOTAL:
+    red: 20
+    warn: 10
+    direction: above
+    deviation: 3.0
+    mode: or
+
+  # -----------------------------------------------------------------------
+  # Section 6: Replication
+  # -----------------------------------------------------------------------
+
+  # Secondary replication lag (seconds). RED above 60s, WARN above 10s.
+  OPLOG_REPLICATION_LAG_TIME:
+    red: 60
+    warn: 10
+    direction: above
+    mode: absolute
+
+  # Oplog window (hours). Direction=below. RED below 24h, WARN below 36h.
+  OPLOG_MASTER_TIME:
+    red: 24
+    warn: 36
+    direction: below
+    mode: absolute
+
+  # Oplog write rate (GB/hour) — baseline-only spike detection.
+  OPLOG_RATE_GB_PER_HOUR:
+    deviation: 3.0
+    mode: baseline
+
+  # -----------------------------------------------------------------------
+  # Section 7: Connections
+  # -----------------------------------------------------------------------
+
+  # Total mongod connections. RED above 25000 OR 2x baseline.
+  CONNECTIONS:
+    red: 25000
+    warn: 20000
+    direction: above
+    deviation: 2.0
+    mode: or

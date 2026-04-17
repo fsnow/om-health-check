@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 from om_health_check.checks.connectivity import run
-from om_health_check.models import STATUS_GREEN, STATUS_RED, STATUS_INFO
+from om_health_check.models import STATUS_GREEN, STATUS_RED, STATUS_WARN, STATUS_INFO
 from tests.conftest import make_agent, make_alert
 
 
@@ -29,6 +29,21 @@ class TestActiveAlerts:
         alert_checks = [c for c in section.cluster_checks if "alert" in c.name.lower()]
         assert len(alert_checks) == 1
         assert alert_checks[0].status == STATUS_GREEN
+
+    @patch("om_health_check.checks.connectivity.fetch_host_metrics")
+    def test_advisory_alert_is_info(self, mock_fetch, mock_client, cluster, primary):
+        """HOST_SECURITY_CHECKUP_NOT_MET is advisory — should be INFO, not RED."""
+        mock_fetch.return_value = _MOCK_METRICS
+        mock_client.om.alerts.list_open.return_value = [
+            make_alert(
+                hostname_and_port="mongo1.example.com:27017",
+                event_type="HOST_SECURITY_CHECKUP_NOT_MET",
+            ),
+        ]
+        section = run(mock_client, "p1", cluster, [primary])
+        alert_checks = [c for c in section.cluster_checks if c.name == "Active alert"]
+        assert len(alert_checks) == 1
+        assert alert_checks[0].status == STATUS_INFO
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_matching_alert_red(self, mock_fetch, mock_client, cluster, primary):
@@ -65,14 +80,32 @@ class TestAgentStatus:
         assert any(c.status == STATUS_GREEN for c in agent_checks)
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
-    def test_standby_agent_red(self, mock_fetch, mock_client, cluster, primary):
+    def test_all_standby_red(self, mock_fetch, mock_client, cluster, primary):
+        """No ACTIVE agent means monitoring is broken."""
         mock_fetch.return_value = _MOCK_METRICS
         mock_client.om.agents.list_monitoring.return_value = [
             make_agent(hostname="mongo1.example.com", state_name="STANDBY", last_ping="2026-04-01T00:00:00Z"),
         ]
         section = run(mock_client, "p1", cluster, [primary])
         agent_checks = [c for c in section.cluster_checks if c.name == "Agent status"]
-        assert any(c.status == STATUS_RED for c in agent_checks)
+        assert len(agent_checks) == 1
+        assert agent_checks[0].status == STATUS_RED
+        assert "No ACTIVE" in agent_checks[0].message
+
+    @patch("om_health_check.checks.connectivity.fetch_host_metrics")
+    def test_one_active_others_standby_green(self, mock_fetch, mock_client, cluster, three_hosts):
+        """OM leader election: one ACTIVE + rest STANDBY is expected healthy state."""
+        mock_fetch.return_value = _MOCK_METRICS
+        mock_client.om.agents.list_monitoring.return_value = [
+            make_agent(hostname="mongo1.example.com", state_name="ACTIVE"),
+            make_agent(hostname="mongo2.example.com", state_name="STANDBY"),
+            make_agent(hostname="mongo3.example.com", state_name="STANDBY"),
+        ]
+        section = run(mock_client, "p1", cluster, three_hosts)
+        agent_checks = [c for c in section.cluster_checks if c.name == "Agent status"]
+        assert len(agent_checks) == 1
+        assert agent_checks[0].status == STATUS_GREEN
+        assert "2 standby" in agent_checks[0].message
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_no_agents_red(self, mock_fetch, mock_client, cluster, primary):

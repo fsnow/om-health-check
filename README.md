@@ -6,10 +6,10 @@ A CLI tool that queries the MongoDB Ops Manager API to produce a structured heal
 
 Runs 9 categories of checks against one or more clusters via the Ops Manager API:
 
-1. **Connectivity & Infrastructure** — API reachability, node status, agent status, active alerts, host restarts, network throughput
+1. **Connectivity & Infrastructure** — API reachability, node status, agent status, active alerts, network throughput
 2. **Compute Resources** — CPU (user, iowait, process), memory, swap; deeper CPU breakdown when issues detected
-3. **Disk Resources** — read/write latency, IOPS, partition space, queue depth, iowait correlation
-4. **Cache Resources** — WiredTiger cache fill ratio, dirty ratio, cache read/write rates
+3. **Disk Resources** — read/write latency, IOPS, partition space, iowait correlation
+4. **Cache Resources** — WiredTiger cache used bytes, dirty bytes, cache read/write rates
 5. **Database Activity & Workload** — query targeting, scan and order, opcounters, document metrics, execution times, global lock queues, Performance Advisor
 6. **Replication** — replication lag, oplog window, oplog rate
 7. **Connections** — connection count, zero-connection detection, connection storm correlation
@@ -98,6 +98,10 @@ thresholds:
     warn: 8.0
 ```
 
+See [`examples/all-thresholds.yaml`](examples/all-thresholds.yaml) for a reference file listing every metric with its built-in defaults — copy, subset, and edit to produce a custom config.
+
+See [`examples/low-thresholds.yaml`](examples/low-thresholds.yaml) for a smoke-test config with aggressively low thresholds designed to trigger RED on a healthy cluster — useful for verifying the tool runs end-to-end.
+
 ### Threshold fields
 
 | Field | Type | Description |
@@ -121,11 +125,43 @@ thresholds:
 
 Current metric values are compared against the same hour, same day of week, one week prior. This accounts for recurring workload patterns (business hours vs nights vs weekends) and avoids flagging normal variance as anomalous.
 
-Granularity is PT1H (hourly averages). Ops Manager retains hourly data for 2 months by default.
+**Current values** are fetched at PT1M granularity over the past hour and averaged, producing a 1-hour rolling average. This sidesteps Ops Manager's mid-hour PT1H rollup, which is not yet populated for rate-based metrics (CPU %, network bytes/sec) until the hour boundary.
+
+**Baseline values** are fetched at PT1H granularity from the 1-hour window one week ago. Ops Manager retains hourly data for 2 months by default.
+
+Comparing two hourly averages keeps the check apples-to-apples and resistant to single-minute spikes.
+
+### Graceful degradation when data is missing
+
+The tool is resilient to gaps in OM data:
+
+- **No current data available** → reported as INFO (e.g., no read activity means no `DISK_PARTITION_LATENCY_READ` sample)
+- **No baseline data available** (cluster is less than 1 week old) → behavior depends on evaluation mode:
+  - `absolute` — works unchanged (baseline is informational)
+  - `baseline` — reports INFO with the current value and "no baseline yet (cluster < 1 week old)"
+  - `and` / `or` — degrades to threshold-only evaluation, with a "no baseline yet" note appended to the message
+- **Metric not exposed by the OM API version** → batched fetch falls back to per-metric calls; unavailable metrics are summarized once on stderr
+
+## Status rollup
+
+Each check produces one of four statuses:
+
+- `GREEN` — healthy
+- `WARN` — approaching threshold
+- `RED` — threshold crossed or baseline significantly deviated
+- `INFO` — informational only (missing data, advisory alerts, degraded evaluation)
+
+Section, cluster, and overall status roll up the worst status among their children — **with one important rule: `INFO` never bubbles up**. A cluster with only INFO items still reports overall GREEN. This keeps the headline color honest about operational health without hiding informational details.
+
+Certain advisory alerts (e.g., `HOST_SECURITY_CHECKUP_NOT_MET`, which commonly fires as a false positive for deployments using external auth like LDAP) are classified as INFO so they are visible but do not color the overall report.
+
+## Monitoring agents
+
+Ops Manager uses leader election for monitoring agents: exactly one agent per project is `ACTIVE`, the rest are `STANDBY` (ready to take over if the active agent fails). The tool reports a single GREEN "Agent status" check when at least one agent is ACTIVE, and RED only if no ACTIVE agent exists (which means monitoring data is not being collected).
 
 ## Dependencies
 
-- [python-mongodb-ops-manager](https://pypi.org/project/opsmanager/) — Ops Manager API client
+- [opsmanager](https://pypi.org/project/opsmanager/) — Ops Manager API client
 - [Jinja2](https://pypi.org/project/Jinja2/) — HTML report templating
 - [packaging](https://pypi.org/project/packaging/) — version comparison
 - [PyYAML](https://pypi.org/project/PyYAML/) — config file parsing

@@ -5,23 +5,39 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "om-health-check"
 version = "0.2.0"
-description = "MongoDB Ops Manager automated health check tool"
+description = "Automated MongoDB cluster health checks via the Ops Manager API — for incident triage and proactive review."
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Frank Snow", email = "frank.snow@mongodb.com"},
+    {name = "Frank Snow"}
+]
+maintainers = [
+    {name = "Frank Snow"}
+]
+keywords = [
+    "mongodb",
+    "ops-manager",
+    "health-check",
+    "monitoring",
+    "incident-response",
+    "database",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
 ]
 dependencies = [
     "opsmanager>=0.4.2",
@@ -31,7 +47,10 @@ dependencies = [
 ]
 
 [project.urls]
-Source = "https://github.com/fsnow/om-health-check"
+Homepage = "https://github.com/fsnow/om-health-check"
+Documentation = "https://github.com/fsnow/om-health-check#readme"
+Repository = "https://github.com/fsnow/om-health-check.git"
+Issues = "https://github.com/fsnow/om-health-check/issues"
 
 [project.scripts]
 om-health-check = "om_health_check.cli:main"

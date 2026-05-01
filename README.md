@@ -24,7 +24,7 @@ Each metric is compared against both an absolute threshold and a 1-week baseline
 pip install om-health-check
 ```
 
-Requires Python 3.10+.
+Requires Python 3.9+.
 
 ## API key permissions
 

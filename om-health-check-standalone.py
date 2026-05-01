@@ -23,7 +23,7 @@ Source:  https://github.com/fsnow/om-health-check
 Version: see __version__ below
 
 Runtime requirements (must be importable):
-    Python 3.10+, requests, jinja2, packaging, pyyaml
+    Python 3.9+, requests, jinja2, packaging, pyyaml
 
 Usage:
     export OPS_MANAGER_USER=<public-key>

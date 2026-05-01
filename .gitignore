@@ -10,3 +10,4 @@ dist/
 build/
 .venv/
 .DS_Store
+wf_non-prod_inactive_rs.txt

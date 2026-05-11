@@ -47,8 +47,12 @@ RENDERERS = {
 def run(config: Config) -> Report:
     """Run health checks and render output."""
     # Reset per-run state
-    from om_health_check.baseline import _warned_metrics
+    from om_health_check.baseline import _warned_metrics, parse_lookback, set_baseline_lookback
+    from om_health_check.concurrency import set_max_workers
     _warned_metrics.clear()
+    if config.baseline_lookback:
+        set_baseline_lookback(parse_lookback(config.baseline_lookback))
+    set_max_workers(config.max_workers)
 
     report = Report(om_url=config.om_url)
 

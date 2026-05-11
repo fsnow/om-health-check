@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datetime import timedelta
+
 from om_health_check.baseline import (
     evaluate_metric,
     _compute_deviation,
@@ -17,6 +19,7 @@ from om_health_check.baseline import (
     _extract_value,
     fetch_host_metrics,
     fetch_disk_metrics,
+    parse_lookback,
 )
 from om_health_check.models import STATUS_GREEN, STATUS_INFO, STATUS_RED, STATUS_WARN
 from om_health_check.thresholds import Threshold, DIR_ABOVE, DIR_BELOW, MODE_ABSOLUTE, MODE_BASELINE, MODE_AND, MODE_OR
@@ -227,7 +230,7 @@ class TestModeBaseline:
         # Cluster < 1 week old — explicit INFO with message
         r = evaluate_metric("OPCOUNTER_QUERY", 10000, None)
         assert r.status == STATUS_INFO
-        assert "no baseline yet" in r.message.lower()
+        assert "no baseline data available" in r.message.lower()
 
     def test_zero_baseline_nonzero_current(self):
         r = evaluate_metric("OPCOUNTER_QUERY", 100, 0)
@@ -356,7 +359,7 @@ class TestModeOr:
 
 
 # ---------------------------------------------------------------------------
-# evaluate_metric — missing baseline (cluster < 1 week old)
+# evaluate_metric — missing baseline data
 # ---------------------------------------------------------------------------
 
 
@@ -365,13 +368,13 @@ class TestMissingBaseline:
         # MODE_BASELINE with no baseline → INFO with explanation
         r = evaluate_metric("OPCOUNTER_QUERY", 5000, None)
         assert r.status == STATUS_INFO
-        assert "no baseline yet" in r.message.lower()
+        assert "no baseline data available" in r.message.lower()
 
     def test_and_mode_degrades_to_threshold_over(self):
         # MODE_AND, over threshold, no baseline → WARN (can't confirm deviation)
         r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 97.0, None)
         assert r.status == STATUS_WARN
-        assert "no baseline yet" in r.message.lower()
+        assert "no baseline data available" in r.message.lower()
 
     def test_and_mode_degrades_to_threshold_under(self):
         # MODE_AND, under threshold, no baseline → GREEN
@@ -382,7 +385,7 @@ class TestMissingBaseline:
         # MODE_OR with threshold crossed → still RED even without baseline
         r = evaluate_metric("CONNECTIONS", 30000, None)
         assert r.status == STATUS_RED
-        assert "no baseline yet" in r.message.lower()
+        assert "no baseline data available" in r.message.lower()
 
     def test_or_mode_under_threshold_green(self):
         # MODE_OR under threshold, no baseline → GREEN (can't check deviation)
@@ -640,3 +643,41 @@ class TestFetchDiskMetrics:
         fetch_disk_metrics(MagicMock(), "p1", "h1", "nvme0n1", ["DISK_IOPS"])
         call_kwargs = mock_fallback.call_args[1]
         assert call_kwargs["partition_name"] == "nvme0n1"
+
+
+class TestParseLookback:
+    def test_days(self):
+        assert parse_lookback("7d") == timedelta(days=7)
+
+    def test_hours(self):
+        assert parse_lookback("4h") == timedelta(hours=4)
+
+    def test_minutes(self):
+        assert parse_lookback("30m") == timedelta(minutes=30)
+
+    def test_strips_whitespace_and_case(self):
+        assert parse_lookback("  3D  ") == timedelta(days=3)
+
+    def test_rejects_missing_unit(self):
+        with pytest.raises(ValueError):
+            parse_lookback("7")
+
+    def test_rejects_unknown_unit(self):
+        with pytest.raises(ValueError):
+            parse_lookback("7y")
+
+    def test_rejects_non_integer(self):
+        with pytest.raises(ValueError):
+            parse_lookback("1.5h")
+
+    def test_rejects_zero(self):
+        with pytest.raises(ValueError):
+            parse_lookback("0d")
+
+    def test_rejects_negative(self):
+        with pytest.raises(ValueError):
+            parse_lookback("-7d")
+
+    def test_rejects_empty(self):
+        with pytest.raises(ValueError):
+            parse_lookback("")

@@ -8,6 +8,7 @@ from opsmanager.types import Cluster, Host
 
 from om_health_check.baseline import evaluate_metric, fetch_host_metrics
 from om_health_check.client import HealthCheckClient
+from om_health_check.concurrency import parallel_host_check
 from om_health_check.models import STATUS_GREEN, STATUS_INFO, STATUS_RED, Check, HostSection, Section
 
 _TARGETING_METRICS = [
@@ -78,39 +79,35 @@ def run(
     hosts: list[Host],
 ) -> Section:
     section = Section(name="Database Activity & Workload")
-
-    for host in hosts:
-        hs = HostSection(
-            host=host.host_port,
-            role=host.replica_state_name or host.type_name or "UNKNOWN",
-        )
-
-        metrics = fetch_host_metrics(
-            client.om, project_id, host.id, _ALL_METRICS
-        )
-
-        for metric_name in _ALL_METRICS:
-            current, baseline = metrics.get(metric_name, (None, None))
-            result = evaluate_metric(metric_name, current, baseline)
-            hs.checks.append(
-                Check(
-                    name=metric_name,
-                    status=result.status,
-                    value=result.current_value,
-                    units=_UNITS.get(metric_name, "ops/s"),
-                    baseline_value=result.baseline_value,
-                    baseline_deviation=result.deviation,
-                    threshold=result.threshold.red if result.threshold else None,
-                    message=result.message,
-                )
-            )
-
-        # Performance Advisor
-        _check_performance_advisor(client, project_id, host, hs)
-
-        section.hosts.append(hs)
-
+    section.hosts = parallel_host_check(
+        lambda h: _check_host(client, project_id, h), hosts
+    )
     return section
+
+
+def _check_host(client: HealthCheckClient, project_id: str, host: Host) -> HostSection:
+    hs = HostSection(
+        host=host.host_port,
+        role=host.replica_state_name or host.type_name or "UNKNOWN",
+    )
+    metrics = fetch_host_metrics(client.om, project_id, host.id, _ALL_METRICS)
+    for metric_name in _ALL_METRICS:
+        current, baseline = metrics.get(metric_name, (None, None))
+        result = evaluate_metric(metric_name, current, baseline)
+        hs.checks.append(
+            Check(
+                name=metric_name,
+                status=result.status,
+                value=result.current_value,
+                units=_UNITS.get(metric_name, "ops/s"),
+                baseline_value=result.baseline_value,
+                baseline_deviation=result.deviation,
+                threshold=result.threshold.red if result.threshold else None,
+                message=result.message,
+            )
+        )
+    _check_performance_advisor(client, project_id, host, hs)
+    return hs
 
 
 def _check_performance_advisor(

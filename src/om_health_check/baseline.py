@@ -124,7 +124,7 @@ def evaluate_metric(
     abs_warn = _crosses_warn(current_value, thresh)
     dev_red = _exceeds_deviation(current_value, baseline_value, thresh)
 
-    # Baseline missing (cluster < 1 week old, or metric wasn't collected then).
+    # Baseline missing (cluster too new, no activity, or rollup not computed).
     # Degrade gracefully per mode.
     baseline_missing = baseline_value is None and thresh.deviation is not None
 
@@ -146,7 +146,7 @@ def evaluate_metric(
                 deviation=None,
                 status=STATUS_INFO,
                 threshold=thresh,
-                message=f"{current_value:,.2f} — no baseline yet (cluster < 1 week old)",
+                message=f"{current_value:,.2f} — no baseline data available",
             )
         status = STATUS_RED if dev_red else STATUS_GREEN
 
@@ -177,7 +177,7 @@ def evaluate_metric(
 
     message = _build_message(metric_name, current_value, baseline_value, deviation, thresh, status)
     if baseline_missing and thresh.mode in (MODE_AND, MODE_OR):
-        message += " (no baseline yet — cluster < 1 week old)"
+        message += " (no baseline data available)"
 
     return MetricResult(
         metric_name=metric_name,
@@ -236,11 +236,52 @@ def _build_message(
 # ---------------------------------------------------------------------------
 
 
+_baseline_lookback: timedelta = timedelta(weeks=1)
+
+
+def set_baseline_lookback(lookback: timedelta) -> None:
+    """Override the baseline lookback window (default 1 week).
+
+    Used during testing against a freshly-built OM instance that doesn't yet
+    have 1 week of history. Set to a smaller duration (e.g. timedelta(hours=4))
+    to exercise the baseline fetch path against recent data.
+    """
+    global _baseline_lookback
+    _baseline_lookback = lookback
+
+
+def parse_lookback(s: str) -> timedelta:
+    """Parse a lookback string like '7d', '4h', or '30m' into a timedelta."""
+    s = s.strip().lower()
+    if not s or s[-1] not in ("d", "h", "m"):
+        raise ValueError(f"lookback must end in d/h/m (got '{s}')")
+    try:
+        n = int(s[:-1])
+    except ValueError:
+        raise ValueError(f"lookback must be an integer followed by d/h/m (got '{s}')")
+    if n <= 0:
+        raise ValueError(f"lookback must be positive (got '{s}')")
+    unit = s[-1]
+    if unit == "d":
+        return timedelta(days=n)
+    if unit == "h":
+        return timedelta(hours=n)
+    return timedelta(minutes=n)
+
+
 def _baseline_time_range() -> tuple[str, str]:
-    """Return ISO 8601 start/end for the baseline window (same hour, 1 week ago)."""
+    """Return ISO 8601 start/end for the baseline window.
+
+    Window is 4 hours wide, ending `_baseline_lookback` ago, aligned to the top
+    of the hour. A 4-hour window is the minimum that reliably contains a
+    fully-aggregated PT1H bucket for rate-based metrics (CPU %, network bytes/s,
+    opcounters, etc.) — OM does not compute the rate aggregation for the most
+    recent in-progress bucket, so a narrower window often returns only that
+    incomplete bucket and rate metrics come back null.
+    """
     now = datetime.now(timezone.utc)
-    baseline_end = now.replace(minute=0, second=0, microsecond=0) - timedelta(weeks=1)
-    baseline_start = baseline_end - timedelta(hours=1)
+    baseline_end = now.replace(minute=0, second=0, microsecond=0) - _baseline_lookback
+    baseline_start = baseline_end - timedelta(hours=4)
     return baseline_start.isoformat(), baseline_end.isoformat()
 
 

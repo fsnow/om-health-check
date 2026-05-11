@@ -363,11 +363,18 @@ class OpsManagerClient:
     """Minimal OM API client: digest auth + JSON GET + pagination."""
 
     def __init__(self, base_url: str, public_key: str, private_key: str,
-                 timeout: int = 30):
+                 timeout: int = 30, pool_size: int = 10):
         self.base_url = base_url.rstrip("/") + "/api/public/v1.0/"
         self.session = requests.Session()
         self.session.auth = HTTPDigestAuth(public_key, private_key)
         self.session.headers["Accept"] = "application/json"
+        # Mount HTTPAdapter with configurable pool size so concurrency above
+        # urllib3's default (10) doesn't bottleneck on connection acquisition.
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=pool_size, pool_maxsize=pool_size,
+        )
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         self.timeout = timeout
 
         # Service namespaces — attached here so call sites read as
@@ -1003,7 +1010,7 @@ def evaluate_metric(metric_name, current_value, baseline_value) -> MetricResult:
         if baseline_missing:
             return MetricResult(
                 metric_name, current_value, None, None, STATUS_INFO, thresh,
-                f"{current_value:,.2f} — no baseline yet (cluster < 1 week old)")
+                f"{current_value:,.2f} — no baseline data available")
         status = STATUS_RED if dev_red else STATUS_GREEN
     elif thresh.mode == MODE_AND:
         if baseline_missing:
@@ -1029,7 +1036,7 @@ def evaluate_metric(metric_name, current_value, baseline_value) -> MetricResult:
     message = _build_message(metric_name, current_value, baseline_value,
                              deviation, thresh, status)
     if baseline_missing and thresh.mode in (MODE_AND, MODE_OR):
-        message += " (no baseline yet — cluster < 1 week old)"
+        message += " (no baseline data available)"
 
     return MetricResult(metric_name, current_value, baseline_value, deviation,
                         status, thresh, message)
@@ -1065,10 +1072,44 @@ def _build_message(metric_name, current, baseline, deviation, thresh, status) ->
     return " ".join(parts)
 
 
+_baseline_lookback: timedelta = timedelta(weeks=1)
+
+
+def set_baseline_lookback(lookback: timedelta) -> None:
+    global _baseline_lookback
+    _baseline_lookback = lookback
+
+
+def parse_lookback(s: str) -> timedelta:
+    """Parse '7d', '4h', '30m' into a timedelta."""
+    s = s.strip().lower()
+    if not s or s[-1] not in ("d", "h", "m"):
+        raise ValueError(f"lookback must end in d/h/m (got '{s}')")
+    try:
+        n = int(s[:-1])
+    except ValueError:
+        raise ValueError(f"lookback must be an integer followed by d/h/m (got '{s}')")
+    if n <= 0:
+        raise ValueError(f"lookback must be positive (got '{s}')")
+    if s[-1] == "d":
+        return timedelta(days=n)
+    if s[-1] == "h":
+        return timedelta(hours=n)
+    return timedelta(minutes=n)
+
+
 def _baseline_time_range():
+    """ISO 8601 start/end for the baseline window.
+
+    4-hour window ending `_baseline_lookback` ago, aligned to the top of the
+    hour. A 4-hour window is the minimum that reliably contains a fully-
+    aggregated PT1H bucket for rate-based metrics — OM does not compute the
+    rate aggregation for the most recent in-progress bucket, so a narrower
+    window often returns only that incomplete bucket and rates come back null.
+    """
     now = datetime.now(timezone.utc)
-    baseline_end = now.replace(minute=0, second=0, microsecond=0) - timedelta(weeks=1)
-    baseline_start = baseline_end - timedelta(hours=1)
+    baseline_end = now.replace(minute=0, second=0, microsecond=0) - _baseline_lookback
+    baseline_start = baseline_end - timedelta(hours=4)
     return baseline_start.isoformat(), baseline_end.isoformat()
 
 
@@ -1154,6 +1195,24 @@ def fetch_disk_metrics(om, project_id, host_id, partition_name, metric_names):
 # Each function produces one Section of the report.
 # -----------------------------------------------------------------------------
 
+from concurrent.futures import ThreadPoolExecutor as _TPE
+
+_max_workers: int = 10
+
+
+def _set_max_workers(n: int) -> None:
+    global _max_workers
+    _max_workers = max(1, int(n))
+
+
+def _parallel_host_check(fn, items):
+    """Apply fn to each item concurrently; preserve input order."""
+    workers = min(_max_workers, len(items)) if items else 1
+    if workers <= 1:
+        return [fn(item) for item in items]
+    with _TPE(max_workers=workers) as ex:
+        return list(ex.map(fn, items))
+
 
 # -- 5.1 Connectivity & Infrastructure ---------------------------------------
 
@@ -1175,34 +1234,36 @@ def _check_connectivity(client, project_id, cluster, hosts) -> Section:
         Check(name="OM API reachability", status=STATUS_GREEN, message="Connected"))
     _check_alerts(client, project_id, cluster, hosts, section)
     _check_agents(client, project_id, hosts, section)
-
-    for host in hosts:
-        hs = HostSection(host=host.host_port,
-                         role=host.replica_state_name or host.type_name or "UNKNOWN")
-        if not host.host_enabled:
-            hs.checks.append(Check(name="Node status", status=STATUS_RED,
-                                   message="Host is disabled"))
-        elif host.replica_state_name and "DOWN" in host.replica_state_name.upper():
-            hs.checks.append(Check(name="Node status", status=STATUS_RED,
-                                   message=f"Node state: {host.replica_state_name}"))
-        else:
-            hs.checks.append(Check(name="Node status", status=STATUS_GREEN,
-                                   message=f"Node state: {host.replica_state_name or 'OK'}"))
-
-        metrics = fetch_host_metrics(client.om, project_id, host.id,
-                                     _CONNECTIVITY_METRICS_FETCH)
-        for metric_name in _CONNECTIVITY_METRICS_ITER:
-            current, baseline = metrics.get(metric_name, (None, None))
-            result = evaluate_metric(metric_name, current, baseline)
-            hs.checks.append(Check(
-                name=metric_name, status=result.status, value=result.current_value,
-                units="bytes" if "NETWORK" in metric_name else "requests",
-                baseline_value=result.baseline_value,
-                baseline_deviation=result.deviation,
-                threshold=result.threshold.red if result.threshold else None,
-                message=result.message))
-        section.hosts.append(hs)
+    section.hosts = _parallel_host_check(
+        lambda h: _connectivity_one_host(client, project_id, h), hosts)
     return section
+
+
+def _connectivity_one_host(client, project_id, host):
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    if not host.host_enabled:
+        hs.checks.append(Check(name="Node status", status=STATUS_RED,
+                               message="Host is disabled"))
+    elif host.replica_state_name and "DOWN" in host.replica_state_name.upper():
+        hs.checks.append(Check(name="Node status", status=STATUS_RED,
+                               message=f"Node state: {host.replica_state_name}"))
+    else:
+        hs.checks.append(Check(name="Node status", status=STATUS_GREEN,
+                               message=f"Node state: {host.replica_state_name or 'OK'}"))
+    metrics = fetch_host_metrics(client.om, project_id, host.id,
+                                 _CONNECTIVITY_METRICS_FETCH)
+    for metric_name in _CONNECTIVITY_METRICS_ITER:
+        current, baseline = metrics.get(metric_name, (None, None))
+        result = evaluate_metric(metric_name, current, baseline)
+        hs.checks.append(Check(
+            name=metric_name, status=result.status, value=result.current_value,
+            units="bytes" if "NETWORK" in metric_name else "requests",
+            baseline_value=result.baseline_value,
+            baseline_deviation=result.deviation,
+            threshold=result.threshold.red if result.threshold else None,
+            message=result.message))
+    return hs
 
 
 def _check_alerts(client, project_id, cluster, hosts, section):
@@ -1283,43 +1344,46 @@ _COMPUTE_UNITS = {
 
 def _check_compute(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Compute Resources")
-    for host in hosts:
-        hs = HostSection(host=host.host_port,
-                         role=host.replica_state_name or host.type_name or "UNKNOWN")
-        metrics = fetch_host_metrics(client.om, project_id, host.id,
-                                     _COMPUTE_TOP_METRICS)
-        any_red = False
-        for metric_name in _COMPUTE_TOP_METRICS:
-            current, baseline = metrics.get(metric_name, (None, None))
-            result = evaluate_metric(metric_name, current, baseline)
-            if result.status == STATUS_RED:
-                any_red = True
-            hs.checks.append(Check(
-                name=metric_name, status=result.status, value=result.current_value,
-                units=_COMPUTE_UNITS.get(metric_name, ""),
-                baseline_value=result.baseline_value,
-                baseline_deviation=result.deviation,
-                threshold=result.threshold.red if result.threshold else None,
-                message=result.message))
-        if any_red:
-            deeper = fetch_host_metrics(client.om, project_id, host.id,
-                                        _COMPUTE_DEEPER_CPU + _COMPUTE_DEEPER_MEM)
-            for metric_name in _COMPUTE_DEEPER_CPU + _COMPUTE_DEEPER_MEM:
-                current, baseline = deeper.get(metric_name, (None, None))
-                if current is None:
-                    continue
-                dev = None
-                if baseline is not None and baseline > 0:
-                    dev = current / baseline
-                msg = f"{current:,.2f}"
-                if baseline is not None:
-                    msg += f" (baseline: {baseline:,.2f})"
-                hs.checks.append(Check(
-                    name=metric_name, status=STATUS_INFO, value=current,
-                    units=_COMPUTE_UNITS.get(metric_name, "%"),
-                    baseline_value=baseline, baseline_deviation=dev, message=msg))
-        section.hosts.append(hs)
+    section.hosts = _parallel_host_check(
+        lambda h: _compute_one_host(client, project_id, h), hosts)
     return section
+
+
+def _compute_one_host(client, project_id, host):
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    metrics = fetch_host_metrics(client.om, project_id, host.id, _COMPUTE_TOP_METRICS)
+    any_red = False
+    for metric_name in _COMPUTE_TOP_METRICS:
+        current, baseline = metrics.get(metric_name, (None, None))
+        result = evaluate_metric(metric_name, current, baseline)
+        if result.status == STATUS_RED:
+            any_red = True
+        hs.checks.append(Check(
+            name=metric_name, status=result.status, value=result.current_value,
+            units=_COMPUTE_UNITS.get(metric_name, ""),
+            baseline_value=result.baseline_value,
+            baseline_deviation=result.deviation,
+            threshold=result.threshold.red if result.threshold else None,
+            message=result.message))
+    if any_red:
+        deeper = fetch_host_metrics(client.om, project_id, host.id,
+                                    _COMPUTE_DEEPER_CPU + _COMPUTE_DEEPER_MEM)
+        for metric_name in _COMPUTE_DEEPER_CPU + _COMPUTE_DEEPER_MEM:
+            current, baseline = deeper.get(metric_name, (None, None))
+            if current is None:
+                continue
+            dev = None
+            if baseline is not None and baseline > 0:
+                dev = current / baseline
+            msg = f"{current:,.2f}"
+            if baseline is not None:
+                msg += f" (baseline: {baseline:,.2f})"
+            hs.checks.append(Check(
+                name=metric_name, status=STATUS_INFO, value=current,
+                units=_COMPUTE_UNITS.get(metric_name, "%"),
+                baseline_value=baseline, baseline_deviation=dev, message=msg))
+    return hs
 
 
 # -- 5.3 Disk Resources ------------------------------------------------------
@@ -1340,40 +1404,43 @@ _DISK_UNITS = {
 
 def _check_disk(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Disk Resources")
-    for host in hosts:
-        hs = HostSection(host=host.host_port,
-                         role=host.replica_state_name or host.type_name or "UNKNOWN")
-        disks = client.om.deployments.list_disks(project_id, host.id)
-        for disk in disks:
-            metrics = fetch_disk_metrics(client.om, project_id, host.id,
-                                         disk.partition_name, _DISK_METRICS)
-            for metric_name in _DISK_METRICS:
-                current, baseline = metrics.get(metric_name, (None, None))
-                result = evaluate_metric(metric_name, current, baseline)
-                hs.checks.append(Check(
-                    name=f"{metric_name} [{disk.partition_name}]",
-                    status=result.status, value=result.current_value,
-                    units=_DISK_UNITS.get(metric_name, ""),
-                    baseline_value=result.baseline_value,
-                    baseline_deviation=result.deviation,
-                    threshold=result.threshold.red if result.threshold else None,
-                    message=result.message))
-        # CPU iowait correlation
-        iowait_metrics = fetch_host_metrics(
-            client.om, project_id, host.id, ["SYSTEM_NORMALIZED_CPU_IOWAIT"])
-        iowait_current, iowait_baseline = iowait_metrics.get(
-            "SYSTEM_NORMALIZED_CPU_IOWAIT", (None, None))
-        if iowait_current is not None:
-            iowait_result = evaluate_metric(
-                "SYSTEM_NORMALIZED_CPU_IOWAIT", iowait_current, iowait_baseline)
-            disk_has_red = any(c.status == STATUS_RED for c in hs.checks)
-            if disk_has_red and iowait_result.status in (STATUS_RED, STATUS_WARN):
-                hs.checks.append(Check(
-                    name="CPU iowait correlation", status=iowait_result.status,
-                    value=iowait_current, units="%",
-                    message=f"Elevated iowait ({iowait_current:.1f}%) correlates with disk pressure"))
-        section.hosts.append(hs)
+    section.hosts = _parallel_host_check(
+        lambda h: _disk_one_host(client, project_id, h), hosts)
     return section
+
+
+def _disk_one_host(client, project_id, host):
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    disks = client.om.deployments.list_disks(project_id, host.id)
+    for disk in disks:
+        metrics = fetch_disk_metrics(client.om, project_id, host.id,
+                                     disk.partition_name, _DISK_METRICS)
+        for metric_name in _DISK_METRICS:
+            current, baseline = metrics.get(metric_name, (None, None))
+            result = evaluate_metric(metric_name, current, baseline)
+            hs.checks.append(Check(
+                name=f"{metric_name} [{disk.partition_name}]",
+                status=result.status, value=result.current_value,
+                units=_DISK_UNITS.get(metric_name, ""),
+                baseline_value=result.baseline_value,
+                baseline_deviation=result.deviation,
+                threshold=result.threshold.red if result.threshold else None,
+                message=result.message))
+    iowait_metrics = fetch_host_metrics(
+        client.om, project_id, host.id, ["SYSTEM_NORMALIZED_CPU_IOWAIT"])
+    iowait_current, iowait_baseline = iowait_metrics.get(
+        "SYSTEM_NORMALIZED_CPU_IOWAIT", (None, None))
+    if iowait_current is not None:
+        iowait_result = evaluate_metric(
+            "SYSTEM_NORMALIZED_CPU_IOWAIT", iowait_current, iowait_baseline)
+        disk_has_red = any(c.status == STATUS_RED for c in hs.checks)
+        if disk_has_red and iowait_result.status in (STATUS_RED, STATUS_WARN):
+            hs.checks.append(Check(
+                name="CPU iowait correlation", status=iowait_result.status,
+                value=iowait_current, units="%",
+                message=f"Elevated iowait ({iowait_current:.1f}%) correlates with disk pressure"))
+    return hs
 
 
 # -- 5.4 Cache Resources -----------------------------------------------------
@@ -1384,22 +1451,26 @@ _CACHE_METRICS = ["CACHE_USED_BYTES", "CACHE_DIRTY_BYTES",
 
 def _check_cache(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Cache Resources")
-    for host in hosts:
-        hs = HostSection(host=host.host_port,
-                         role=host.replica_state_name or host.type_name or "UNKNOWN")
-        metrics = fetch_host_metrics(client.om, project_id, host.id, _CACHE_METRICS)
-        for metric_name in _CACHE_METRICS:
-            current, baseline = metrics.get(metric_name, (None, None))
-            result = evaluate_metric(metric_name, current, baseline)
-            hs.checks.append(Check(
-                name=metric_name, status=result.status, value=result.current_value,
-                units="bytes",
-                baseline_value=result.baseline_value,
-                baseline_deviation=result.deviation,
-                threshold=result.threshold.red if result.threshold else None,
-                message=result.message))
-        section.hosts.append(hs)
+    section.hosts = _parallel_host_check(
+        lambda h: _cache_one_host(client, project_id, h), hosts)
     return section
+
+
+def _cache_one_host(client, project_id, host):
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    metrics = fetch_host_metrics(client.om, project_id, host.id, _CACHE_METRICS)
+    for metric_name in _CACHE_METRICS:
+        current, baseline = metrics.get(metric_name, (None, None))
+        result = evaluate_metric(metric_name, current, baseline)
+        hs.checks.append(Check(
+            name=metric_name, status=result.status, value=result.current_value,
+            units="bytes",
+            baseline_value=result.baseline_value,
+            baseline_deviation=result.deviation,
+            threshold=result.threshold.red if result.threshold else None,
+            message=result.message))
+    return hs
 
 
 # -- 5.5 Database Activity & Workload ----------------------------------------
@@ -1429,23 +1500,27 @@ _WORKLOAD_UNITS = {
 
 def _check_workload(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Database Activity & Workload")
-    for host in hosts:
-        hs = HostSection(host=host.host_port,
-                         role=host.replica_state_name or host.type_name or "UNKNOWN")
-        metrics = fetch_host_metrics(client.om, project_id, host.id, _WORKLOAD_METRICS)
-        for metric_name in _WORKLOAD_METRICS:
-            current, baseline = metrics.get(metric_name, (None, None))
-            result = evaluate_metric(metric_name, current, baseline)
-            hs.checks.append(Check(
-                name=metric_name, status=result.status, value=result.current_value,
-                units=_WORKLOAD_UNITS.get(metric_name, "ops/s"),
-                baseline_value=result.baseline_value,
-                baseline_deviation=result.deviation,
-                threshold=result.threshold.red if result.threshold else None,
-                message=result.message))
-        _check_performance_advisor(client, project_id, host, hs)
-        section.hosts.append(hs)
+    section.hosts = _parallel_host_check(
+        lambda h: _workload_one_host(client, project_id, h), hosts)
     return section
+
+
+def _workload_one_host(client, project_id, host):
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    metrics = fetch_host_metrics(client.om, project_id, host.id, _WORKLOAD_METRICS)
+    for metric_name in _WORKLOAD_METRICS:
+        current, baseline = metrics.get(metric_name, (None, None))
+        result = evaluate_metric(metric_name, current, baseline)
+        hs.checks.append(Check(
+            name=metric_name, status=result.status, value=result.current_value,
+            units=_WORKLOAD_UNITS.get(metric_name, "ops/s"),
+            baseline_value=result.baseline_value,
+            baseline_deviation=result.deviation,
+            threshold=result.threshold.red if result.threshold else None,
+            message=result.message))
+    _check_performance_advisor(client, project_id, host, hs)
+    return hs
 
 
 def _check_performance_advisor(client, project_id, host, hs):
@@ -1496,28 +1571,33 @@ _REPL_UNITS = {
 
 def _check_replication(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Replication")
-    for host in hosts:
-        hs = HostSection(host=host.host_port,
-                         role=host.replica_state_name or host.type_name or "UNKNOWN")
-        if host.is_primary:
-            metric_names = _REPL_PRIMARY_METRICS
-        elif host.is_secondary:
-            metric_names = _REPL_SECONDARY_METRICS + _REPL_PRIMARY_METRICS
-        else:
-            continue  # skip arbiters and mongos
-        metrics = fetch_host_metrics(client.om, project_id, host.id, metric_names)
-        for metric_name in metric_names:
-            current, baseline = metrics.get(metric_name, (None, None))
-            result = evaluate_metric(metric_name, current, baseline)
-            hs.checks.append(Check(
-                name=metric_name, status=result.status, value=result.current_value,
-                units=_REPL_UNITS.get(metric_name, ""),
-                baseline_value=result.baseline_value,
-                baseline_deviation=result.deviation,
-                threshold=result.threshold.red if result.threshold else None,
-                message=result.message))
-        section.hosts.append(hs)
+    results = _parallel_host_check(
+        lambda h: _replication_one_host(client, project_id, h), hosts)
+    section.hosts = [hs for hs in results if hs is not None]
     return section
+
+
+def _replication_one_host(client, project_id, host):
+    if host.is_primary:
+        metric_names = _REPL_PRIMARY_METRICS
+    elif host.is_secondary:
+        metric_names = _REPL_SECONDARY_METRICS + _REPL_PRIMARY_METRICS
+    else:
+        return None  # skip arbiters and mongos
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    metrics = fetch_host_metrics(client.om, project_id, host.id, metric_names)
+    for metric_name in metric_names:
+        current, baseline = metrics.get(metric_name, (None, None))
+        result = evaluate_metric(metric_name, current, baseline)
+        hs.checks.append(Check(
+            name=metric_name, status=result.status, value=result.current_value,
+            units=_REPL_UNITS.get(metric_name, ""),
+            baseline_value=result.baseline_value,
+            baseline_deviation=result.deviation,
+            threshold=result.threshold.red if result.threshold else None,
+            message=result.message))
+    return hs
 
 
 # -- 5.7 Connections ---------------------------------------------------------
@@ -1528,43 +1608,47 @@ _LATENCY_METRICS = ["OP_EXECUTION_TIME_READS", "OP_EXECUTION_TIME_WRITES"]
 
 def _check_connections(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Connections")
-    for host in hosts:
-        hs = HostSection(host=host.host_port,
-                         role=host.replica_state_name or host.type_name or "UNKNOWN")
-        metrics = fetch_host_metrics(client.om, project_id, host.id,
-                                     _CONN_METRICS + _LATENCY_METRICS)
-        conn_current, conn_baseline = metrics.get("CONNECTIONS", (None, None))
-        if conn_current is not None and conn_current == 0:
-            hs.checks.append(Check(
-                name="CONNECTIONS", status=STATUS_GREEN, value=0,
-                units="connections", baseline_value=conn_baseline,
-                message="0 connections — MongoDB is healthy. "
-                        "Problem is upstream (load balancer, DNS, app config)."))
-        else:
-            result = evaluate_metric("CONNECTIONS", conn_current, conn_baseline)
-            hs.checks.append(Check(
-                name="CONNECTIONS", status=result.status, value=result.current_value,
-                units="connections", baseline_value=result.baseline_value,
-                baseline_deviation=result.deviation,
-                threshold=result.threshold.red if result.threshold else None,
-                message=result.message))
-            if result.status == STATUS_RED and conn_current is not None:
-                latency_elevated = False
-                for metric_name in _LATENCY_METRICS:
-                    cur, base = metrics.get(metric_name, (None, None))
-                    if cur is not None:
-                        r = evaluate_metric(metric_name, cur, base)
-                        if r.status in (STATUS_RED, STATUS_WARN):
-                            latency_elevated = True
-                            break
-                if latency_elevated:
-                    hs.checks.append(Check(
-                        name="Connection storm correlation", status=STATUS_INFO,
-                        message="Connection spike correlates with elevated "
-                                "operation latency — connection storm may be a "
-                                "symptom, not the root cause."))
-        section.hosts.append(hs)
+    section.hosts = _parallel_host_check(
+        lambda h: _connections_one_host(client, project_id, h), hosts)
     return section
+
+
+def _connections_one_host(client, project_id, host):
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    metrics = fetch_host_metrics(client.om, project_id, host.id,
+                                 _CONN_METRICS + _LATENCY_METRICS)
+    conn_current, conn_baseline = metrics.get("CONNECTIONS", (None, None))
+    if conn_current is not None and conn_current == 0:
+        hs.checks.append(Check(
+            name="CONNECTIONS", status=STATUS_GREEN, value=0,
+            units="connections", baseline_value=conn_baseline,
+            message="0 connections — MongoDB is healthy. "
+                    "Problem is upstream (load balancer, DNS, app config)."))
+        return hs
+    result = evaluate_metric("CONNECTIONS", conn_current, conn_baseline)
+    hs.checks.append(Check(
+        name="CONNECTIONS", status=result.status, value=result.current_value,
+        units="connections", baseline_value=result.baseline_value,
+        baseline_deviation=result.deviation,
+        threshold=result.threshold.red if result.threshold else None,
+        message=result.message))
+    if result.status == STATUS_RED and conn_current is not None:
+        latency_elevated = False
+        for metric_name in _LATENCY_METRICS:
+            cur, base = metrics.get(metric_name, (None, None))
+            if cur is not None:
+                r = evaluate_metric(metric_name, cur, base)
+                if r.status in (STATUS_RED, STATUS_WARN):
+                    latency_elevated = True
+                    break
+        if latency_elevated:
+            hs.checks.append(Check(
+                name="Connection storm correlation", status=STATUS_INFO,
+                message="Connection spike correlates with elevated "
+                        "operation latency — connection storm may be a "
+                        "symptom, not the root cause."))
+    return hs
 
 
 # -- 5.8 Backup --------------------------------------------------------------
@@ -1904,6 +1988,8 @@ class Config:
     project_names: List[str]
     cluster_name: Optional[str] = None
     formats: Optional[List[str]] = None
+    baseline_lookback: Optional[str] = None  # e.g. "7d", "4h", "30m"
+    max_workers: int = 10  # threads for per-host parallelism
 
     def __post_init__(self):
         if self.formats is None:
@@ -1914,10 +2000,14 @@ class HealthCheckClient:
     """Wraps OpsManagerClient with convenience helpers for project/cluster/host."""
 
     def __init__(self, config: Config):
+        # Pool sized to worker count, but never below 10 so low --max-workers
+        # settings don't shrink it.
+        pool_size = max(config.max_workers, 10)
         self.om = OpsManagerClient(
             base_url=config.om_url,
             public_key=config.username,
             private_key=config.api_key,
+            pool_size=pool_size,
         )
 
     def close(self):
@@ -1967,6 +2057,9 @@ _PERMISSION_HINT = (
 
 def run(config: Config) -> Report:
     _warned_metrics.clear()
+    if config.baseline_lookback:
+        set_baseline_lookback(parse_lookback(config.baseline_lookback))
+    _set_max_workers(config.max_workers)
     report = Report(om_url=config.om_url)
 
     try:
@@ -2104,6 +2197,14 @@ def main(argv=None):
                         help="Output format: txt, json, html, or comma-separated (default: txt)")
     parser.add_argument("--config", default=None,
                         help="Path to YAML config file for threshold overrides")
+    parser.add_argument("--baseline-lookback", default=None, dest="baseline_lookback",
+                        help="Baseline lookback window (default: 7d). Format: <N>d|h|m, "
+                             "e.g. '7d', '4h', '30m'. Useful for testing against newly-built "
+                             "OM instances that don't yet have 1 week of history.")
+    parser.add_argument("--max-workers", type=int, default=10, dest="max_workers",
+                        help="Maximum threads used for per-host API calls within each "
+                             "check section (default: 10). The HTTP connection pool is "
+                             "sized to match (or 10, whichever is greater).")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
 
@@ -2119,7 +2220,8 @@ def main(argv=None):
     config = Config(
         om_url=args.om_url, username=username, api_key=api_key,
         project_names=args.projects, cluster_name=args.cluster,
-        formats=args.formats,
+        formats=args.formats, baseline_lookback=args.baseline_lookback,
+        max_workers=args.max_workers,
     )
     try:
         run(config)

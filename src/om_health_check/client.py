@@ -12,10 +12,15 @@ class HealthCheckClient:
     """Wraps OpsManagerClient with convenience methods for health check workflows."""
 
     def __init__(self, config: Config):
+        # Pool sized to worker count, but never below urllib3's default (10)
+        # so low --max-workers settings don't shrink it.
+        pool_size = max(config.max_workers, 10)
         self.om = OpsManagerClient(
             base_url=config.om_url,
             public_key=config.username,
             private_key=config.api_key,
+            rate_limit=config.rate_limit,
+            pool_size=pool_size,
         )
 
     def close(self):

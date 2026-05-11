@@ -359,11 +359,41 @@ class SuggestedIndex:
 
 # -- HTTP client --------------------------------------------------------------
 
+class _RateLimiter:
+    """Thread-safe rate limiter using strict spacing between requests.
+
+    Mirrors the opsmanager library's default behavior: ``rate`` requests per
+    second enforced by a minimum interval (1/rate seconds) between request
+    starts. Used to protect production Ops Manager instances from being
+    overwhelmed.
+    """
+
+    def __init__(self, rate: float):
+        import threading
+        self.rate = rate
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def acquire(self) -> None:
+        if self.rate <= 0:
+            return  # rate=0 means no limiting
+        import time as _time
+        min_interval = 1.0 / self.rate
+        while True:
+            with self._lock:
+                now = _time.monotonic()
+                if now >= self._next_allowed:
+                    self._next_allowed = now + min_interval
+                    return
+                wait = self._next_allowed - now
+            _time.sleep(wait)
+
+
 class OpsManagerClient:
-    """Minimal OM API client: digest auth + JSON GET + pagination."""
+    """Minimal OM API client: digest auth + JSON GET + pagination + rate limit."""
 
     def __init__(self, base_url: str, public_key: str, private_key: str,
-                 timeout: int = 30, pool_size: int = 10):
+                 timeout: int = 30, pool_size: int = 10, rate_limit: float = 2.0):
         self.base_url = base_url.rstrip("/") + "/api/public/v1.0/"
         self.session = requests.Session()
         self.session.auth = HTTPDigestAuth(public_key, private_key)
@@ -376,6 +406,7 @@ class OpsManagerClient:
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         self.timeout = timeout
+        self._rate_limiter = _RateLimiter(rate_limit)
 
         # Service namespaces — attached here so call sites read as
         # `client.measurements.host(...)`, matching the real opsmanager.
@@ -399,6 +430,7 @@ class OpsManagerClient:
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = self.base_url + path
+        self._rate_limiter.acquire()
         resp = self.session.get(url, params=params, timeout=self.timeout)
         _raise_for_status(resp)
         return resp.json()
@@ -1990,6 +2022,7 @@ class Config:
     formats: Optional[List[str]] = None
     baseline_lookback: Optional[str] = None  # e.g. "7d", "4h", "30m"
     max_workers: int = 10  # threads for per-host parallelism
+    rate_limit: float = 2.0  # OM API requests/second (default conservative)
 
     def __post_init__(self):
         if self.formats is None:
@@ -2008,6 +2041,7 @@ class HealthCheckClient:
             public_key=config.username,
             private_key=config.api_key,
             pool_size=pool_size,
+            rate_limit=config.rate_limit,
         )
 
     def close(self):
@@ -2205,6 +2239,13 @@ def main(argv=None):
                         help="Maximum threads used for per-host API calls within each "
                              "check section (default: 10). The HTTP connection pool is "
                              "sized to match (or 10, whichever is greater).")
+    parser.add_argument("--rate-limit", type=float, default=2.0, dest="rate_limit",
+                        help="Maximum API requests per second sent to Ops Manager "
+                             "(default: 2). The default is conservative to protect "
+                             "production OM instances. Bump to 5-10 for faster runs "
+                             "when OM has headroom; large sharded clusters may require "
+                             "this for the report to complete in a reasonable time. "
+                             "Set to 0 to disable rate limiting.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
 
@@ -2221,7 +2262,7 @@ def main(argv=None):
         om_url=args.om_url, username=username, api_key=api_key,
         project_names=args.projects, cluster_name=args.cluster,
         formats=args.formats, baseline_lookback=args.baseline_lookback,
-        max_workers=args.max_workers,
+        max_workers=args.max_workers, rate_limit=args.rate_limit,
     )
     try:
         run(config)

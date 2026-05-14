@@ -39,8 +39,21 @@ class HealthCheckClient:
     def get_clusters(
         self, project_id: str, cluster_name: str | None = None
     ) -> list[Cluster]:
-        """List clusters in a project, optionally filtered by name."""
+        """List clusters in a project, optionally filtered by name.
+
+        For sharded deployments OM returns one entry per shard replica set,
+        one per config-server replica set, AND one for the parent sharded
+        cluster — all sharing the same ``cluster_name``. We exclude the
+        children (shard RSes have ``shard_name`` set; config-server RSes have
+        type ``CONFIG_SERVER_REPLICA_SET``) because the parent's host list
+        already covers all of them.
+        """
         clusters = self.om.clusters.list(project_id)
+        clusters = [
+            c for c in clusters
+            if not getattr(c, "shard_name", None)
+            and getattr(c, "type_name", "") != "CONFIG_SERVER_REPLICA_SET"
+        ]
         if cluster_name:
             clusters = [c for c in clusters if c.cluster_name == cluster_name]
             if not clusters:

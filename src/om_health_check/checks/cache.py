@@ -31,9 +31,14 @@ def run(
     hosts: list[Host],
 ) -> Section:
     section = Section(name="Cache Resources")
-    section.hosts = parallel_host_check(
-        lambda h: _check_host(client, project_id, h), hosts
+    # Mongos has no WiredTiger cache; skip those hosts to avoid spurious
+    # "no data" rows and to prevent the global "metrics unavailable"
+    # warning from failed mongos fetches poisoning the run.
+    mongod_hosts = [h for h in hosts if not h.is_mongos]
+    results = parallel_host_check(
+        lambda h: _check_host(client, project_id, h), mongod_hosts
     )
+    section.hosts = [hs for hs in results if hs is not None]
     return section
 
 

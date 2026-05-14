@@ -65,7 +65,7 @@ except ImportError:
     _YAML_AVAILABLE = False
 
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 # Suppress verbose HTTP error logs; we summarize failures ourselves.
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
@@ -155,6 +155,7 @@ class Cluster:
     cluster_name: str
     type_name: str = ""
     replica_set_name: Optional[str] = None
+    shard_name: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Cluster":
@@ -163,6 +164,7 @@ class Cluster:
             cluster_name=d.get("clusterName", ""),
             type_name=d.get("typeName", ""),
             replica_set_name=d.get("replicaSetName"),
+            shard_name=d.get("shardName"),
         )
 
 
@@ -1325,24 +1327,25 @@ def _check_alerts(client, project_id, cluster, hosts, section):
 
 
 def _check_agents(client, project_id, hosts, section):
+    # Monitoring agent state is project-wide: OM elects exactly one ACTIVE
+    # agent per project, with the rest STANDBY. The active agent may run on
+    # a host in a different cluster within the same project, so we evaluate
+    # at project level rather than filtering by per-cluster hostnames.
     agents = client.om.agents.list_monitoring(project_id)
-    host_hostnames = {h.hostname for h in hosts}
-    cluster_agents = [a for a in agents if a.hostname in host_hostnames]
-    if not cluster_agents:
+    if not agents:
         section.cluster_checks.append(Check(
             name="Agent status", status=STATUS_RED,
-            message="No monitoring agents found for cluster hosts"))
+            message="No monitoring agents found in this project"))
         return
-    # OM monitoring uses leader election: exactly one agent per project is
-    # ACTIVE, rest are STANDBY. Missing an active agent is RED.
-    active_agents = [a for a in cluster_agents if a.state_name == "ACTIVE"]
+    active_agents = [a for a in agents if a.state_name == "ACTIVE"]
     if not active_agents:
         section.cluster_checks.append(Check(
             name="Agent status", status=STATUS_RED,
-            message="No ACTIVE monitoring agent — monitoring data is not being collected"))
+            message="No ACTIVE monitoring agent in project — "
+            "monitoring data is not being collected"))
     else:
         active_hosts = ", ".join(a.hostname for a in active_agents)
-        standby_count = len(cluster_agents) - len(active_agents)
+        standby_count = len(agents) - len(active_agents)
         msg = f"Active on {active_hosts}"
         if standby_count:
             msg += f" ({standby_count} standby)"
@@ -1436,8 +1439,11 @@ _DISK_UNITS = {
 
 def _check_disk(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Disk Resources")
-    section.hosts = _parallel_host_check(
-        lambda h: _disk_one_host(client, project_id, h), hosts)
+    # Mongos has no data partition; skip those hosts.
+    mongod_hosts = [h for h in hosts if not h.is_mongos]
+    results = _parallel_host_check(
+        lambda h: _disk_one_host(client, project_id, h), mongod_hosts)
+    section.hosts = [hs for hs in results if hs is not None]
     return section
 
 
@@ -1483,8 +1489,11 @@ _CACHE_METRICS = ["CACHE_USED_BYTES", "CACHE_DIRTY_BYTES",
 
 def _check_cache(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Cache Resources")
-    section.hosts = _parallel_host_check(
-        lambda h: _cache_one_host(client, project_id, h), hosts)
+    # Mongos has no WiredTiger cache; skip those hosts.
+    mongod_hosts = [h for h in hosts if not h.is_mongos]
+    results = _parallel_host_check(
+        lambda h: _cache_one_host(client, project_id, h), mongod_hosts)
+    section.hosts = [hs for hs in results if hs is not None]
     return section
 
 
@@ -1532,8 +1541,11 @@ _WORKLOAD_UNITS = {
 
 def _check_workload(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Database Activity & Workload")
-    section.hosts = _parallel_host_check(
-        lambda h: _workload_one_host(client, project_id, h), hosts)
+    # Mongos has no opcounters / query metrics / global locks; skip those hosts.
+    mongod_hosts = [h for h in hosts if not h.is_mongos]
+    results = _parallel_host_check(
+        lambda h: _workload_one_host(client, project_id, h), mongod_hosts)
+    section.hosts = [hs for hs in results if hs is not None]
     return section
 
 
@@ -1555,39 +1567,67 @@ def _workload_one_host(client, project_id, host):
     return hs
 
 
+_pa_failure_message = None  # set once after first PA failure for short-circuit
+_PA_PERMISSION_HINT = (
+    " (commonly caused by insufficient permissions — Performance Advisor "
+    "requires Project Data Access Read Only role or higher)"
+)
+
+
+def _reset_pa_state():
+    global _pa_failure_message
+    _pa_failure_message = None
+
+
 def _check_performance_advisor(client, project_id, host, hs):
+    """Check Performance Advisor for suggested indexes.
+
+    We deliberately do not call slowQueryLogs — it would transfer full slow-query
+    content (query text, filter values) just to read the list length. Suggested
+    indexes are server-side derived from those same slow queries.
+
+    After the first failure (auth, forbidden, or 500), we short-circuit so
+    subsequent hosts don't make redundant API calls — they all report the
+    same INFO message.
+    """
+    global _pa_failure_message
+    if _pa_failure_message is not None:
+        hs.checks.append(Check(name="Performance Advisor", status=STATUS_INFO,
+                               message=_pa_failure_message))
+        return
     host_id = host.host_port
     now_ms = int(time.time() * 1000)
     one_hour_ms = 60 * 60 * 1000
     try:
-        slow_queries = client.om.performance_advisor.get_slow_queries(
-            project_id=project_id, host_id=host_id,
-            since=now_ms - one_hour_ms, duration=one_hour_ms)
         advisor_response = client.om.performance_advisor.get_suggested_indexes(
             project_id=project_id, host_id=host_id,
             since=now_ms - one_hour_ms, duration=one_hour_ms)
         suggested_indexes = advisor_response.get("suggested_indexes", [])
-    except Exception:
+    except (OpsManagerAuthenticationError, OpsManagerForbiddenError):
+        _pa_failure_message = (
+            "Performance Advisor access denied — requires Project "
+            "Data Access Read Only role or higher"
+        )
         hs.checks.append(Check(name="Performance Advisor", status=STATUS_INFO,
-                               message="Performance Advisor data unavailable"))
+                               message=_pa_failure_message))
         return
-    has_slow = bool(slow_queries)
-    has_suggestions = bool(suggested_indexes)
-    if has_suggestions:
+    except Exception as exc:
+        _pa_failure_message = (
+            f"Performance Advisor unavailable: {exc}{_PA_PERMISSION_HINT}"[:300]
+        )
+        hs.checks.append(Check(name="Performance Advisor", status=STATUS_INFO,
+                               message=_pa_failure_message))
+        return
+    if suggested_indexes:
         namespaces = {idx.namespace for idx in suggested_indexes}
         hs.checks.append(Check(
             name="Performance Advisor — suggested indexes", status=STATUS_RED,
             value=len(suggested_indexes),
             message=f"{len(suggested_indexes)} index suggestion(s) for: "
                     + ", ".join(sorted(namespaces))))
-    elif has_slow:
-        hs.checks.append(Check(
-            name="Performance Advisor — slow queries", status=STATUS_RED,
-            value=len(slow_queries),
-            message=f"{len(slow_queries)} slow query log(s) in last hour"))
     else:
         hs.checks.append(Check(name="Performance Advisor", status=STATUS_GREEN,
-                               message="No slow queries or index suggestions"))
+                               message="No index suggestions"))
 
 
 # -- 5.6 Replication ---------------------------------------------------------
@@ -2058,7 +2098,16 @@ class HealthCheckClient:
 
     def get_clusters(self, project_id: str,
                      cluster_name: Optional[str] = None) -> List[Cluster]:
+        # For sharded deployments OM returns the parent SHARDED_REPLICA_SET
+        # plus one entry per shard replica set plus one for the config server
+        # replica set — all sharing the same name. Skip the children; the
+        # parent's host list already covers them.
         clusters = self.om.clusters.list(project_id)
+        clusters = [
+            c for c in clusters
+            if not getattr(c, "shard_name", None)
+            and getattr(c, "type_name", "") != "CONFIG_SERVER_REPLICA_SET"
+        ]
         if cluster_name:
             clusters = [c for c in clusters if c.cluster_name == cluster_name]
             if not clusters:
@@ -2091,6 +2140,7 @@ _PERMISSION_HINT = (
 
 def run(config: Config) -> Report:
     _warned_metrics.clear()
+    _reset_pa_state()
     if config.baseline_lookback:
         set_baseline_lookback(parse_lookback(config.baseline_lookback))
     _set_max_workers(config.max_workers)

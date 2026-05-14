@@ -49,7 +49,9 @@ def run(config: Config) -> Report:
     # Reset per-run state
     from om_health_check.baseline import _warned_metrics, parse_lookback, set_baseline_lookback
     from om_health_check.concurrency import set_max_workers
+    from om_health_check.checks.workload import _reset_pa_state
     _warned_metrics.clear()
+    _reset_pa_state()
     if config.baseline_lookback:
         set_baseline_lookback(parse_lookback(config.baseline_lookback))
     set_max_workers(config.max_workers)

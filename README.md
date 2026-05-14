@@ -28,11 +28,19 @@ Requires Python 3.9+.
 
 ## API key permissions
 
-The API key must have the **Project Read Only** role on each project being checked. This provides read access to deployments, measurements, alerts, agents, backup status, and Performance Advisor data.
+The API key must have the **Project Read Only** role on each project being checked. This provides read access to deployments, measurements, alerts, agents, and backup status — covering 8 of the 9 check sections.
 
 No write permissions are required. The tool never modifies any Ops Manager configuration.
 
-If the API key lacks sufficient permissions, affected sections will report a RED status with a message indicating which permission is missing.
+### Performance Advisor section — additional role required
+
+The **Performance Advisor** section calls endpoints that require the **Project Data Access Read Only** role (or higher). Per the [Ops Manager docs](https://www.mongodb.com/docs/ops-manager/current/reference/api/performance-advisor/), the allowed roles are: Project Owner, Project Data Access Admin, Project Data Access Read/Write, or Project Data Access Read Only.
+
+The minimum role granting this access (Project Data Access Read Only) also grants the holder read access to database contents. There is no narrower read-only-observability role for Performance Advisor in Ops Manager.
+
+For security-conscious deployments where most personnel should not have database read access, run the tool with a **Project Read Only** key. The Performance Advisor section will report an INFO message — *"Performance Advisor access denied — requires Project Data Access Read Only role or higher"* — and the other 8 sections work normally. To minimize API load when access is denied, the script makes only one Performance Advisor call per cluster and reuses the message for the remaining hosts.
+
+If the API key lacks sufficient permissions, affected checks report a clear message indicating which permission is missing rather than failing the whole report.
 
 ## Usage
 

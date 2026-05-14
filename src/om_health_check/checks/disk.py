@@ -33,9 +33,12 @@ def run(
     hosts: list[Host],
 ) -> Section:
     section = Section(name="Disk Resources")
-    section.hosts = parallel_host_check(
-        lambda h: _check_host(client, project_id, h), hosts
+    # Mongos has no data partition / disk metrics; skip those hosts.
+    mongod_hosts = [h for h in hosts if not h.is_mongos]
+    results = parallel_host_check(
+        lambda h: _check_host(client, project_id, h), mongod_hosts
     )
+    section.hosts = [hs for hs in results if hs is not None]
     return section
 
 

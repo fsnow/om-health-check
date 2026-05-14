@@ -116,23 +116,8 @@ class TestPerformanceAdvisor:
         assert "db.collection" in advisor[0].message
 
     @patch("om_health_check.checks.workload.fetch_host_metrics")
-    def test_slow_queries_red(self, mock_fetch, mock_client, cluster, primary):
-        mock_fetch.return_value = _green_metrics()
-        mock_client.om.performance_advisor.get_slow_queries.return_value = [MagicMock()]
-        mock_client.om.performance_advisor.get_suggested_indexes.return_value = {
-            "suggested_indexes": [],
-            "shapes": [],
-        }
-
-        section = run(mock_client, "p1", cluster, [primary])
-        advisor = [c for c in section.hosts[0].checks if "slow queries" in c.name.lower()]
-        assert len(advisor) == 1
-        assert advisor[0].status == STATUS_RED
-
-    @patch("om_health_check.checks.workload.fetch_host_metrics")
     def test_no_issues_green(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = _green_metrics()
-        mock_client.om.performance_advisor.get_slow_queries.return_value = []
         mock_client.om.performance_advisor.get_suggested_indexes.return_value = {
             "suggested_indexes": [],
             "shapes": [],
@@ -145,11 +130,37 @@ class TestPerformanceAdvisor:
 
     @patch("om_health_check.checks.workload.fetch_host_metrics")
     def test_advisor_unavailable_info(self, mock_fetch, mock_client, cluster, primary):
+        from om_health_check.checks.workload import _reset_pa_state
+        _reset_pa_state()
         mock_fetch.return_value = _green_metrics()
-        mock_client.om.performance_advisor.get_slow_queries.side_effect = Exception("unavailable")
+        mock_client.om.performance_advisor.get_suggested_indexes.side_effect = Exception("unavailable")
 
         section = run(mock_client, "p1", cluster, [primary])
         advisor = [c for c in section.hosts[0].checks if "performance advisor" in c.name.lower()]
         assert len(advisor) == 1
         assert advisor[0].status == STATUS_INFO
         assert "unavailable" in advisor[0].message.lower()
+
+    @patch("om_health_check.checks.workload.fetch_host_metrics")
+    def test_advisor_access_denied_short_circuits(self, mock_fetch, mock_client, cluster, three_hosts):
+        """After the first 401/403, subsequent hosts must not re-call the PA API."""
+        from om_health_check.checks.workload import _reset_pa_state
+        from opsmanager.errors import OpsManagerForbiddenError
+        _reset_pa_state()
+        mock_fetch.return_value = _green_metrics()
+        mock_client.om.performance_advisor.get_suggested_indexes.side_effect = (
+            OpsManagerForbiddenError("forbidden")
+        )
+
+        section = run(mock_client, "p1", cluster, three_hosts)
+
+        # All 3 hosts get the access-denied check
+        all_advisor = [c for hs in section.hosts for c in hs.checks if "performance advisor" in c.name.lower()]
+        assert len(all_advisor) == 3
+        for chk in all_advisor:
+            assert chk.status == STATUS_INFO
+            assert "access denied" in chk.message.lower()
+            assert "project data access read only" in chk.message.lower()
+
+        # But only ONE API call was made — the rest short-circuited
+        assert mock_client.om.performance_advisor.get_suggested_indexes.call_count == 1

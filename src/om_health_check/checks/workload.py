@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from opsmanager.errors import OpsManagerAuthenticationError, OpsManagerForbiddenError
 from opsmanager.types import Cluster, Host
 
 from om_health_check.baseline import evaluate_metric, fetch_host_metrics
@@ -79,9 +80,14 @@ def run(
     hosts: list[Host],
 ) -> Section:
     section = Section(name="Database Activity & Workload")
-    section.hosts = parallel_host_check(
-        lambda h: _check_host(client, project_id, h), hosts
+    # Mongos has no opcounters / query metrics / global locks; skip those
+    # hosts to avoid spurious "no data" rows and prevent the global "metrics
+    # unavailable" dedup from poisoning the run for real mongod hosts.
+    mongod_hosts = [h for h in hosts if not h.is_mongos]
+    results = parallel_host_check(
+        lambda h: _check_host(client, project_id, h), mongod_hosts
     )
+    section.hosts = [hs for hs in results if hs is not None]
     return section
 
 
@@ -110,24 +116,56 @@ def _check_host(client: HealthCheckClient, project_id: str, host: Host) -> HostS
     return hs
 
 
+# Per-run state. Once the first PA call fails, subsequent hosts short-circuit
+# with the cached message rather than re-calling — if PA is broken or
+# inaccessible for one host in a project, it's broken/inaccessible for all of
+# them. Reset at the start of each run.
+_pa_failure_message: str | None = None
+
+
+def _reset_pa_state() -> None:
+    global _pa_failure_message
+    _pa_failure_message = None
+
+
+_PA_PERMISSION_HINT = (
+    " (commonly caused by insufficient permissions — Performance Advisor "
+    "requires Project Data Access Read Only role or higher)"
+)
+
+
 def _check_performance_advisor(
     client: HealthCheckClient,
     project_id: str,
     host: Host,
     hs: HostSection,
 ):
-    """Check Performance Advisor for slow queries and index suggestions."""
+    """Check Performance Advisor for suggested indexes.
+
+    We deliberately do not call the slowQueryLogs endpoint: it would transfer
+    the full slow-query payload (query text, filter values, parameters) just
+    to read the list length. Suggested indexes are derived from those same
+    slow queries server-side, so we get the actionable signal without
+    pulling potentially sensitive query content over the wire.
+
+    Permissions: requires Project Data Access Read Only or higher. Many
+    customers only grant Project Read Only to health-check users. After the
+    first failure (401/403 OR 500 — OM sometimes returns the latter for
+    unauthorized PA calls), we short-circuit subsequent hosts.
+    """
+    global _pa_failure_message
+    if _pa_failure_message is not None:
+        hs.checks.append(
+            Check(name="Performance Advisor", status=STATUS_INFO,
+                  message=_pa_failure_message)
+        )
+        return
+
     host_id = host.host_port
     now_ms = int(time.time() * 1000)
     one_hour_ms = 60 * 60 * 1000
 
     try:
-        slow_queries = client.om.performance_advisor.get_slow_queries(
-            project_id=project_id,
-            host_id=host_id,
-            since=now_ms - one_hour_ms,
-            duration=one_hour_ms,
-        )
         advisor_response = client.om.performance_advisor.get_suggested_indexes(
             project_id=project_id,
             host_id=host_id,
@@ -135,20 +173,31 @@ def _check_performance_advisor(
             duration=one_hour_ms,
         )
         suggested_indexes = advisor_response.get("suggested_indexes", [])
-    except Exception:
+    except (OpsManagerAuthenticationError, OpsManagerForbiddenError):
+        _pa_failure_message = (
+            "Performance Advisor access denied — requires Project "
+            "Data Access Read Only role or higher"
+        )
         hs.checks.append(
-            Check(
-                name="Performance Advisor",
-                status=STATUS_INFO,
-                message="Performance Advisor data unavailable",
-            )
+            Check(name="Performance Advisor", status=STATUS_INFO,
+                  message=_pa_failure_message)
+        )
+        return
+    except Exception as exc:
+        # OM also returns 500 INTERNAL SERVER ERROR for PA — sometimes from
+        # genuine internal errors (not enough query history, feature off,
+        # OM restart) but also when the caller lacks PA permissions (the OM
+        # permission check itself errors before returning 401).
+        _pa_failure_message = (
+            f"Performance Advisor unavailable: {exc}{_PA_PERMISSION_HINT}"[:300]
+        )
+        hs.checks.append(
+            Check(name="Performance Advisor", status=STATUS_INFO,
+                  message=_pa_failure_message)
         )
         return
 
-    has_slow = bool(slow_queries)
-    has_suggestions = bool(suggested_indexes)
-
-    if has_suggestions:
+    if suggested_indexes:
         namespaces = {idx.namespace for idx in suggested_indexes}
         hs.checks.append(
             Check(
@@ -159,20 +208,11 @@ def _check_performance_advisor(
                 + ", ".join(sorted(namespaces)),
             )
         )
-    elif has_slow:
-        hs.checks.append(
-            Check(
-                name="Performance Advisor — slow queries",
-                status=STATUS_RED,
-                value=len(slow_queries),
-                message=f"{len(slow_queries)} slow query log(s) in last hour",
-            )
-        )
     else:
         hs.checks.append(
             Check(
                 name="Performance Advisor",
                 status=STATUS_GREEN,
-                message="No slow queries or index suggestions",
+                message="No index suggestions",
             )
         )

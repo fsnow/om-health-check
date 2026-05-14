@@ -167,36 +167,39 @@ def _check_agents(
     hosts: list[Host],
     section: Section,
 ):
-    """Check monitoring agent status for hosts in this cluster."""
+    """Check monitoring agent status.
+
+    Monitoring is project-wide: OM elects exactly one ACTIVE monitoring agent
+    per project, with the rest STANDBY. The active agent runs on some host in
+    the project — not necessarily a host in the cluster we're currently
+    checking (especially in multi-cluster projects or sharded deployments
+    where the active agent may run on a mongos or different replica set).
+    So we evaluate at project level, not by filtering to cluster hostnames.
+    """
     agents = client.om.agents.list_monitoring(project_id)
-
-    host_hostnames = {h.hostname for h in hosts}
-    cluster_agents = [a for a in agents if a.hostname in host_hostnames]
-
-    if not cluster_agents:
+    if not agents:
         section.cluster_checks.append(
             Check(
                 name="Agent status",
                 status=STATUS_RED,
-                message="No monitoring agents found for cluster hosts",
+                message="No monitoring agents found in this project",
             )
         )
         return
 
-    # OM monitoring uses leader election: exactly one agent per project is ACTIVE,
-    # the rest are STANDBY (ready to take over). Missing an active agent is RED.
-    active_agents = [a for a in cluster_agents if a.state_name == "ACTIVE"]
+    active_agents = [a for a in agents if a.state_name == "ACTIVE"]
     if not active_agents:
         section.cluster_checks.append(
             Check(
                 name="Agent status",
                 status=STATUS_RED,
-                message="No ACTIVE monitoring agent — monitoring data is not being collected",
+                message="No ACTIVE monitoring agent in project — "
+                "monitoring data is not being collected",
             )
         )
     else:
         active_hosts = ", ".join(a.hostname for a in active_agents)
-        standby_count = len(cluster_agents) - len(active_agents)
+        standby_count = len(agents) - len(active_agents)
         msg = f"Active on {active_hosts}"
         if standby_count:
             msg += f" ({standby_count} standby)"

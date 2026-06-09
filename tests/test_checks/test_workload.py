@@ -7,23 +7,23 @@ from om_health_check.models import STATUS_GREEN, STATUS_RED, STATUS_INFO
 
 
 def _green_metrics():
-    """All workload metrics at healthy levels."""
+    """All workload metrics at healthy levels (below MODE_AND red thresholds)."""
     return {
         "QUERY_TARGETING_SCANNED_PER_RETURNED": (50, 45),
         "QUERY_TARGETING_SCANNED_OBJECTS_PER_RETURNED": (30, 28),
-        "QUERY_EXECUTOR_SCANNED": (1000, 900),
-        "QUERY_EXECUTOR_SCANNED_OBJECTS": (800, 750),
-        "DOCUMENT_METRICS_RETURNED": (500, 480),
-        "DOCUMENT_METRICS_INSERTED": (100, 90),
-        "DOCUMENT_METRICS_UPDATED": (200, 190),
-        "DOCUMENT_METRICS_DELETED": (10, 8),
-        "OPERATIONS_SCAN_AND_ORDER": (5, 4),
-        "OPCOUNTER_CMD": (300, 280),
-        "OPCOUNTER_QUERY": (1000, 900),
-        "OPCOUNTER_UPDATE": (200, 190),
-        "OPCOUNTER_DELETE": (10, 8),
-        "OPCOUNTER_GETMORE": (50, 45),
-        "OPCOUNTER_INSERT": (100, 90),
+        "QUERY_EXECUTOR_SCANNED": (50, 45),               # red=100
+        "QUERY_EXECUTOR_SCANNED_OBJECTS": (500, 480),     # red=1000
+        "DOCUMENT_METRICS_RETURNED": (50, 48),            # red=100
+        "DOCUMENT_METRICS_INSERTED": (5, 4),              # red=10
+        "DOCUMENT_METRICS_UPDATED": (5, 4),               # red=10
+        "DOCUMENT_METRICS_DELETED": (2, 1),               # red=10
+        "OPERATIONS_SCAN_AND_ORDER": (0.3, 0.2),          # red=1.0
+        "OPCOUNTER_CMD": (10, 9),                         # red=20
+        "OPCOUNTER_QUERY": (5, 4),                        # red=10
+        "OPCOUNTER_UPDATE": (5, 4),                       # red=10
+        "OPCOUNTER_DELETE": (2, 1),                       # red=10
+        "OPCOUNTER_GETMORE": (5, 4),                      # red=10
+        "OPCOUNTER_INSERT": (5, 4),                       # red=10
         "OP_EXECUTION_TIME_READS": (20, 18),
         "OP_EXECUTION_TIME_WRITES": (15, 12),
         "OP_EXECUTION_TIME_COMMANDS": (10, 8),

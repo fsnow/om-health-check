@@ -60,15 +60,29 @@ class TestCacheMetrics:
 
     @patch("om_health_check.checks.cache.fetch_host_metrics")
     def test_cache_bytes_deviation_red(self, mock_fetch, mock_client, cluster, primary):
+        # Above red=1_000_000 AND 4x baseline → both conditions met under mode=AND
         mock_fetch.return_value = {
             "CACHE_USED_BYTES": (70.0, 68.0),
             "CACHE_DIRTY_BYTES": (2.0, 1.5),
-            "CACHE_BYTES_READ_INTO": (20000, 5000),  # 4x > 3.0 = RED (baseline mode)
+            "CACHE_BYTES_READ_INTO": (8_000_000, 2_000_000),  # 4x > 3.0 AND > 1MB/s
             "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
         }
         section = run(mock_client, "p1", cluster, [primary])
         bytes_check = [c for c in section.hosts[0].checks if c.name == "CACHE_BYTES_READ_INTO"][0]
         assert bytes_check.status == STATUS_RED
+
+    @patch("om_health_check.checks.cache.fetch_host_metrics")
+    def test_cache_bytes_low_value_high_dev_green(self, mock_fetch, mock_client, cluster, primary):
+        # 4x deviation on a tiny absolute value should NOT fire RED under mode=AND
+        mock_fetch.return_value = {
+            "CACHE_USED_BYTES": (70.0, 68.0),
+            "CACHE_DIRTY_BYTES": (2.0, 1.5),
+            "CACHE_BYTES_READ_INTO": (20000, 5000),  # 4x but < 1MB/s
+            "CACHE_BYTES_WRITTEN_FROM": (3000, 2800),
+        }
+        section = run(mock_client, "p1", cluster, [primary])
+        bytes_check = [c for c in section.hosts[0].checks if c.name == "CACHE_BYTES_READ_INTO"][0]
+        assert bytes_check.status == STATUS_GREEN
 
     @patch("om_health_check.checks.cache.fetch_host_metrics")
     def test_no_data_info(self, mock_fetch, mock_client, cluster, primary):

@@ -211,29 +211,29 @@ class TestModeAbsolute:
 
 class TestModeBaseline:
     def test_spike_red(self):
-        r = evaluate_metric("OPCOUNTER_QUERY", 40000, 10000)  # 4x
+        r = evaluate_metric("NETWORK_BYTES_IN", 40000, 10000)  # 4x
         assert r.status == STATUS_RED
 
     def test_normal_green(self):
-        r = evaluate_metric("OPCOUNTER_QUERY", 12000, 10000)  # 1.2x
+        r = evaluate_metric("NETWORK_BYTES_IN", 12000, 10000)  # 1.2x
         assert r.status == STATUS_GREEN
 
     def test_exact_threshold(self):
-        r = evaluate_metric("OPCOUNTER_QUERY", 30000, 10000)  # 3.0x = deviation
+        r = evaluate_metric("NETWORK_BYTES_IN", 30000, 10000)  # 3.0x = deviation
         assert r.status == STATUS_RED
 
     def test_just_under(self):
-        r = evaluate_metric("OPCOUNTER_QUERY", 29000, 10000)  # 2.9x
+        r = evaluate_metric("NETWORK_BYTES_IN", 29000, 10000)  # 2.9x
         assert r.status == STATUS_GREEN
 
     def test_no_baseline(self):
         # Cluster < 1 week old — explicit INFO with message
-        r = evaluate_metric("OPCOUNTER_QUERY", 10000, None)
+        r = evaluate_metric("NETWORK_BYTES_IN", 10000, None)
         assert r.status == STATUS_INFO
         assert "no baseline data available" in r.message.lower()
 
     def test_zero_baseline_nonzero_current(self):
-        r = evaluate_metric("OPCOUNTER_QUERY", 100, 0)
+        r = evaluate_metric("NETWORK_BYTES_IN", 100, 0)
         assert r.status == STATUS_RED
 
     def test_network_spike(self):
@@ -329,9 +329,11 @@ class TestModeOr:
         r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 12.0, 3.0)  # > 10 and 4x > 3.0
         assert r.status == STATUS_RED
 
-    def test_disk_latency_deviation_only(self):
+    def test_disk_latency_deviation_only_warns(self):
+        # 7ms is below red=10 but above warn=5; deviation alone no longer
+        # triggers RED under mode=AND. WARN reflects the elevated value.
         r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 7.0, 2.0)  # < 10 but 3.5x > 3.0
-        assert r.status == STATUS_RED
+        assert r.status == STATUS_WARN
 
     def test_disk_latency_green(self):
         r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 3.0, 2.5)  # < 10, 1.2x < 3.0
@@ -349,9 +351,11 @@ class TestModeOr:
         r = evaluate_metric("OP_EXECUTION_TIME_READS", 120, 50)  # > 100
         assert r.status == STATUS_RED
 
-    def test_op_execution_time_deviation(self):
+    def test_op_execution_time_deviation_warns(self):
+        # 60ms is below red=100 but above warn=50; deviation alone no longer
+        # triggers RED under mode=AND. WARN reflects the elevated value.
         r = evaluate_metric("OP_EXECUTION_TIME_READS", 60, 25)  # < 100 but 2.4x >= 2.0
-        assert r.status == STATUS_RED
+        assert r.status == STATUS_WARN
 
     def test_op_execution_time_green(self):
         r = evaluate_metric("OP_EXECUTION_TIME_READS", 30, 25)
@@ -366,7 +370,7 @@ class TestModeOr:
 class TestMissingBaseline:
     def test_baseline_mode_info(self):
         # MODE_BASELINE with no baseline → INFO with explanation
-        r = evaluate_metric("OPCOUNTER_QUERY", 5000, None)
+        r = evaluate_metric("NETWORK_BYTES_IN", 5000, None)
         assert r.status == STATUS_INFO
         assert "no baseline data available" in r.message.lower()
 

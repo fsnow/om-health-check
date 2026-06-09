@@ -88,20 +88,22 @@ thresholds:
   # Section 3: Disk Resources
   # -----------------------------------------------------------------------
 
-  # Disk read/write latency (ms) — RED if above 10 OR 3x baseline.
+  # Disk read/write latency (ms) — RED only if above 10 ms AND 3x baseline.
+  # AND mode (not OR) so that a 6x jump from 0.16 ms to 1 ms doesn't fire RED:
+  # 1 ms latency is healthy regardless of how much it grew.
   DISK_PARTITION_LATENCY_READ:
     red: 10.0
     warn: 5.0
     direction: above
     deviation: 3.0
-    mode: or
+    mode: and
 
   DISK_PARTITION_LATENCY_WRITE:
     red: 10.0
     warn: 5.0
     direction: above
     deviation: 3.0
-    mode: or
+    mode: and
 
   # Disk IOPS — RED above 950 (assumes gp2/gp3 IOPS ceiling near 1000).
   DISK_PARTITION_IOPS_READ:
@@ -136,13 +138,19 @@ thresholds:
     deviation: 3.0
     mode: baseline
 
+  # Cache I/O bytes/sec — AND mode: tiny values (e.g. 200 B/sec) shouldn't
+  # fire RED even at 4x baseline. red=1 MB/sec floor below which it's noise.
   CACHE_BYTES_READ_INTO:
+    red: 1_000_000
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   CACHE_BYTES_WRITTEN_FROM:
+    red: 1_000_000
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   # -----------------------------------------------------------------------
   # Section 5: Database Activity & Workload
@@ -161,83 +169,117 @@ thresholds:
     deviation: 2.0
     mode: and
 
-  # Query executor scan rates — baseline-only.
+  # Rate metrics below use mode=AND: RED only when the absolute rate is high
+  # enough to matter AND also deviates from baseline. Pure baseline mode
+  # produces false positives on quiet clusters where 3x of a near-zero
+  # baseline is still near-zero.
+
+  # Query executor scan rates.
   QUERY_EXECUTOR_SCANNED:
+    red: 100
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   QUERY_EXECUTOR_SCANNED_OBJECTS:
+    red: 1000
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
-  # Document throughput — baseline-only.
+  # Document throughput.
   DOCUMENT_METRICS_RETURNED:
+    red: 100
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   DOCUMENT_METRICS_INSERTED:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   DOCUMENT_METRICS_UPDATED:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   DOCUMENT_METRICS_DELETED:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
-  # In-memory sort operations — baseline-only spike detection.
+  # In-memory sort operations. A single scan-and-order in an hour rounds to
+  # 0.00; the AND threshold prevents firing on these tiny absolute values.
   OPERATIONS_SCAN_AND_ORDER:
+    red: 1.0
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
-  # Opcounters — baseline-only; absolute levels depend heavily on workload.
+  # Opcounters.
   OPCOUNTER_CMD:
+    red: 20
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   OPCOUNTER_QUERY:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   OPCOUNTER_UPDATE:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   OPCOUNTER_DELETE:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   OPCOUNTER_GETMORE:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
   OPCOUNTER_INSERT:
+    red: 10
+    direction: above
     deviation: 3.0
-    mode: baseline
+    mode: and
 
-  # Average operation execution time (ms) — RED if above 100 OR 2x baseline.
+  # Average operation execution time (ms) — RED only if above 100 ms AND 2x
+  # baseline. AND mode (not OR) so that a 4x jump from 0.34 ms to 1.55 ms
+  # doesn't fire RED: 1.55 ms is healthy regardless of multiplier.
   OP_EXECUTION_TIME_READS:
     red: 100
     warn: 50
     direction: above
     deviation: 2.0
-    mode: or
+    mode: and
 
   OP_EXECUTION_TIME_WRITES:
     red: 100
     warn: 50
     direction: above
     deviation: 2.0
-    mode: or
+    mode: and
 
   OP_EXECUTION_TIME_COMMANDS:
     red: 100
     warn: 50
     direction: above
     deviation: 2.0
-    mode: or
+    mode: and
 
   # Global lock queue depth — RED if sustained queuing (> 10 readers or writers,
   # > 20 total) OR 3x baseline.

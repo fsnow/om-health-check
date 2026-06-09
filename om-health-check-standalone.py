@@ -65,7 +65,7 @@ except ImportError:
     _YAML_AVAILABLE = False
 
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Suppress verbose HTTP error logs; we summarize failures ourselves.
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
@@ -814,9 +814,9 @@ SWAP_USAGE_USED = Threshold(red=100, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 
 # Section 3: Disk Resources
 DISK_PARTITION_LATENCY_READ = Threshold(
-    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_OR)
+    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
 DISK_PARTITION_LATENCY_WRITE = Threshold(
-    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_OR)
+    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
 DISK_PARTITION_IOPS_READ = Threshold(red=950, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 DISK_PARTITION_IOPS_WRITE = Threshold(red=950, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 DISK_PARTITION_SPACE_PERCENT_FREE = Threshold(
@@ -825,33 +825,64 @@ DISK_PARTITION_SPACE_PERCENT_FREE = Threshold(
 # Section 4: Cache Resources
 CACHE_USED_BYTES = Threshold(deviation=2.0, mode=MODE_BASELINE)
 CACHE_DIRTY_BYTES = Threshold(deviation=3.0, mode=MODE_BASELINE)
-CACHE_BYTES_READ_INTO = Threshold(deviation=3.0, mode=MODE_BASELINE)
-CACHE_BYTES_WRITTEN_FROM = Threshold(deviation=3.0, mode=MODE_BASELINE)
+CACHE_BYTES_READ_INTO = Threshold(
+    red=1_000_000, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
+CACHE_BYTES_WRITTEN_FROM = Threshold(
+    red=1_000_000, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
 
 # Section 5: Database Activity & Workload
 QUERY_TARGETING_SCANNED_PER_RETURNED = Threshold(
     red=1000, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
 QUERY_TARGETING_SCANNED_OBJECTS_PER_RETURNED = Threshold(
     red=1000, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
-QUERY_EXECUTOR_SCANNED = Threshold(deviation=3.0, mode=MODE_BASELINE)
-QUERY_EXECUTOR_SCANNED_OBJECTS = Threshold(deviation=3.0, mode=MODE_BASELINE)
-DOCUMENT_METRICS_RETURNED = Threshold(deviation=3.0, mode=MODE_BASELINE)
-DOCUMENT_METRICS_INSERTED = Threshold(deviation=3.0, mode=MODE_BASELINE)
-DOCUMENT_METRICS_UPDATED = Threshold(deviation=3.0, mode=MODE_BASELINE)
-DOCUMENT_METRICS_DELETED = Threshold(deviation=3.0, mode=MODE_BASELINE)
-OPERATIONS_SCAN_AND_ORDER = Threshold(deviation=3.0, mode=MODE_BASELINE)
-OPCOUNTER_CMD = Threshold(deviation=3.0, mode=MODE_BASELINE)
-OPCOUNTER_QUERY = Threshold(deviation=3.0, mode=MODE_BASELINE)
-OPCOUNTER_UPDATE = Threshold(deviation=3.0, mode=MODE_BASELINE)
-OPCOUNTER_DELETE = Threshold(deviation=3.0, mode=MODE_BASELINE)
-OPCOUNTER_GETMORE = Threshold(deviation=3.0, mode=MODE_BASELINE)
-OPCOUNTER_INSERT = Threshold(deviation=3.0, mode=MODE_BASELINE)
+# Rate metrics use mode=AND: RED only when value is high enough to matter
+# in absolute terms AND deviates from baseline. Pure baseline mode produces
+# false positives on quiet clusters where 3x of "tiny" is still tiny.
+QUERY_EXECUTOR_SCANNED = Threshold(
+    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+QUERY_EXECUTOR_SCANNED_OBJECTS = Threshold(
+    red=1000, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+DOCUMENT_METRICS_RETURNED = Threshold(
+    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+DOCUMENT_METRICS_INSERTED = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+DOCUMENT_METRICS_UPDATED = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+DOCUMENT_METRICS_DELETED = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+OPERATIONS_SCAN_AND_ORDER = Threshold(
+    red=1.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+OPCOUNTER_CMD = Threshold(
+    red=20, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+OPCOUNTER_QUERY = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+OPCOUNTER_UPDATE = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+OPCOUNTER_DELETE = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+OPCOUNTER_GETMORE = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
+OPCOUNTER_INSERT = Threshold(
+    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+)
 OP_EXECUTION_TIME_READS = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_OR)
+    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
 OP_EXECUTION_TIME_WRITES = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_OR)
+    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
 OP_EXECUTION_TIME_COMMANDS = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_OR)
+    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
 GLOBAL_LOCK_CURRENT_QUEUE_READERS = Threshold(
     red=10, warn=5, direction=DIR_ABOVE, deviation=3.0, mode=MODE_OR)
 GLOBAL_LOCK_CURRENT_QUEUE_WRITERS = Threshold(

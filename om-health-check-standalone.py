@@ -178,6 +178,7 @@ class Host:
     version: str = ""
     cluster_id: str = ""
     type_name: str = ""
+    shard_name: Optional[str] = None
 
     @property
     def host_port(self) -> str:
@@ -210,6 +211,7 @@ class Host:
             version=d.get("version", ""),
             cluster_id=d.get("clusterId", ""),
             type_name=d.get("typeName", ""),
+            shard_name=d.get("shardName"),
         )
 
 
@@ -714,12 +716,45 @@ class Section:
 
 
 @dataclass
+class Topology:
+    node_count: int = 0
+    cluster_type: str = ""
+    role_counts: dict = field(default_factory=dict)
+    shard_count: int = 0
+
+    def summary_line(self) -> str:
+        roles = ", ".join(
+            f"{count} {role}"
+            for role, count in sorted(self.role_counts.items(), key=lambda x: (-x[1], x[0]))
+        )
+        parts = [f"{self.node_count} nodes"]
+        if self.cluster_type and self.cluster_type != "REPLICA_SET":
+            parts.append(f"({self.cluster_type})")
+        if self.shard_count:
+            shard_word = "shard" if self.shard_count == 1 else "shards"
+            parts.append(f"— {self.shard_count} {shard_word},")
+        if roles:
+            connector = "" if (self.shard_count or self.cluster_type != "REPLICA_SET") else "—"
+            parts.append(f"{connector} {roles}".lstrip())
+        return " ".join(parts)
+
+    def to_dict(self) -> dict:
+        return {
+            "node_count": self.node_count,
+            "cluster_type": self.cluster_type,
+            "role_counts": self.role_counts,
+            "shard_count": self.shard_count,
+        }
+
+
+@dataclass
 class ClusterReport:
     cluster_name: str
     cluster_id: str
     project_name: str
     project_id: str
     timestamp: str = ""
+    topology: "Topology" = None
     sections: List[Section] = field(default_factory=list)
 
     def __post_init__(self):
@@ -739,6 +774,7 @@ class ClusterReport:
             "project_name": self.project_name,
             "project_id": self.project_id,
             "timestamp": self.timestamp,
+            "topology": self.topology.to_dict() if self.topology else None,
             "overall_status": self.overall_status,
             "sections": [s.to_dict() for s in self.sections],
         }
@@ -1905,7 +1941,13 @@ def _check_version(client, project_id, cluster, hosts) -> Section:
 
 # -- 6.1 Text renderer -------------------------------------------------------
 
-def _render_txt(report: Report) -> str:
+_STATUS_RANK = {"GREEN": 0, "INFO": 1, "WARN": 2, "RED": 3}
+
+
+def _render_txt(report: Report, min_status: str = "GREEN") -> str:
+    min_rank = _STATUS_RANK.get(min_status.upper(), 0)
+    brief = min_rank > 0
+
     lines = []
     lines.append("=" * 72)
     lines.append("OM HEALTH CHECK REPORT")
@@ -1917,6 +1959,8 @@ def _render_txt(report: Report) -> str:
             lines.append(f"Elapsed:     {elapsed:.1f}s")
     lines.append(f"Ops Manager: {report.om_url}")
     lines.append(f"Overall:     [{report.overall_status}]")
+    if brief:
+        lines.append(f"Filter:      showing checks with status >= {min_status.upper()}")
     lines.append("=" * 72)
 
     for cr in report.clusters:
@@ -1925,22 +1969,38 @@ def _render_txt(report: Report) -> str:
         lines.append(f"Cluster: {cr.cluster_name}  |  Project: {cr.project_name}  |  "
                      f"[{cr.overall_status}]")
         lines.append("-" * 72)
-        for section in cr.sections:
-            lines.append("")
-            lines.append(f"  ## {section.name}  [{section.status}]")
-            for check in section.cluster_checks:
-                lines.append(_format_check_txt(check, indent=4))
-            for hs in section.hosts:
-                lines.append(f"    -- {hs.host} ({hs.role})")
-                for check in hs.checks:
-                    lines.append(_format_check_txt(check, indent=6))
-        lines.append("")
+        if cr.topology:
+            lines.append(f"  Topology: {cr.topology.summary_line()}")
         red, green, info, warn = _count_statuses(cr)
-        lines.append(f"  Summary: {red} RED, {warn} WARN, {info} INFO, {green} GREEN")
+        lines.append(f"  Summary:  {red} RED, {warn} WARN, {info} INFO, {green} GREEN")
+
+        for section in cr.sections:
+            section_lines = _render_section_txt(section, min_rank)
+            if section_lines:
+                lines.append("")
+                lines.extend(section_lines)
 
     lines.append("")
     lines.append("=" * 72)
     return "\n".join(lines)
+
+
+def _render_section_txt(section, min_rank):
+    body = []
+    for check in section.cluster_checks:
+        if _STATUS_RANK.get(check.status, 0) >= min_rank:
+            body.append(_format_check_txt(check, indent=4))
+    for hs in section.hosts:
+        host_lines = []
+        for check in hs.checks:
+            if _STATUS_RANK.get(check.status, 0) >= min_rank:
+                host_lines.append(_format_check_txt(check, indent=6))
+        if host_lines:
+            body.append(f"    -- {hs.host} ({hs.role})")
+            body.extend(host_lines)
+    if not body and min_rank > 0:
+        return []
+    return [f"  ## {section.name}  [{section.status}]"] + body
 
 
 def _format_check_txt(check: Check, indent: int) -> str:
@@ -2044,6 +2104,7 @@ _HTML_TEMPLATE = _HTML_ENV.from_string("""\
   <div class="cluster-header">
     <h2>{{ cr.cluster_name }} &mdash; {{ cr.project_name }}</h2>
     <span class="status-pill {{ cr.overall_status }}">{{ cr.overall_status }}</span>
+    {% if cr.topology %}<div class="topology">Topology: {{ cr.topology.summary_line() }}</div>{% endif %}
   </div>
 
   {% for section in cr.sections %}
@@ -2113,6 +2174,7 @@ class Config:
     baseline_lookback: Optional[str] = None  # e.g. "7d", "4h", "30m"
     max_workers: int = 10  # threads for per-host parallelism
     rate_limit: float = 2.0  # OM API requests/second (default conservative)
+    min_status: str = "GREEN"  # GREEN (all) | INFO | WARN | RED — txt-only filter
 
     def __post_init__(self):
         if self.formats is None:
@@ -2260,6 +2322,26 @@ def run(config: Config) -> Report:
     return report
 
 
+def _compute_topology(cluster, hosts) -> Topology:
+    """Summarize cluster shape: total nodes, role mix, and shard count."""
+    role_counts = {}
+    shard_names = set()
+    cluster_type = getattr(cluster, "type_name", "") or "REPLICA_SET"
+    for h in hosts:
+        role = h.replica_state_name or h.type_name or "UNKNOWN"
+        role_counts[role] = role_counts.get(role, 0) + 1
+        shard_name = getattr(h, "shard_name", None)
+        if shard_name:
+            shard_names.add(shard_name)
+    shard_count = len(shard_names) if cluster_type == "SHARDED_REPLICA_SET" else 0
+    return Topology(
+        node_count=len(hosts),
+        cluster_type=cluster_type,
+        role_counts=role_counts,
+        shard_count=shard_count,
+    )
+
+
 def _check_cluster(client, project, cluster) -> ClusterReport:
     try:
         hosts = client.get_hosts_for_cluster(project.id, cluster.id)
@@ -2273,7 +2355,8 @@ def _check_cluster(client, project, cluster) -> ClusterReport:
         return cr
 
     cr = ClusterReport(cluster_name=cluster.cluster_name, cluster_id=cluster.id,
-                       project_name=project.name, project_id=project.id)
+                       project_name=project.name, project_id=project.id,
+                       topology=_compute_topology(cluster, hosts))
     for section_name, check_fn in _CHECK_SECTIONS:
         try:
             section = check_fn(client, project.id, cluster, hosts)
@@ -2293,17 +2376,27 @@ def _check_cluster(client, project, cluster) -> ClusterReport:
 
 def _render_report(report, config):
     if len(config.formats) == 1:
-        renderer = _RENDERERS.get(config.formats[0])
-        if renderer:
-            print(renderer(report))
+        rendered = _render_one(report, config.formats[0], config.min_status)
+        if rendered is not None:
+            print(rendered)
         return
     for fmt in config.formats:
-        renderer = _RENDERERS.get(fmt)
-        if renderer:
-            filename = f"om-health-check-report.{fmt}"
-            with open(filename, "w") as f:
-                f.write(renderer(report))
-            print(f"Wrote {filename}", file=sys.stderr)
+        rendered = _render_one(report, fmt, config.min_status)
+        if rendered is None:
+            continue
+        filename = f"om-health-check-report.{fmt}"
+        with open(filename, "w") as f:
+            f.write(rendered)
+        print(f"Wrote {filename}", file=sys.stderr)
+
+
+def _render_one(report, fmt, min_status):
+    renderer = _RENDERERS.get(fmt)
+    if renderer is None:
+        return None
+    if fmt == "txt":
+        return renderer(report, min_status=min_status)
+    return renderer(report)
 
 
 _VALID_FORMATS = {"txt", "json", "html"}
@@ -2348,6 +2441,14 @@ def main(argv=None):
                              "when OM has headroom; large sharded clusters may require "
                              "this for the report to complete in a reasonable time. "
                              "Set to 0 to disable rate limiting.")
+    parser.add_argument("--min-status", choices=["GREEN", "INFO", "WARN", "RED"],
+                        default="GREEN", dest="min_status",
+                        help="Filter check lines in txt output to those at or above "
+                             "the given status. GREEN (default) shows everything; WARN "
+                             "gives a brief report with only WARN/RED findings — useful "
+                             "for pasting into LLMs with character limits (e.g. GitHub "
+                             "Copilot's 128K). Cluster header, summary, and topology "
+                             "line are always included.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
 
@@ -2365,6 +2466,7 @@ def main(argv=None):
         project_names=args.projects, cluster_name=args.cluster,
         formats=args.formats, baseline_lookback=args.baseline_lookback,
         max_workers=args.max_workers, rate_limit=args.rate_limit,
+        min_status=args.min_status,
     )
     try:
         run(config)

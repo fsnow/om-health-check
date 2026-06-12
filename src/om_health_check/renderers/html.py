@@ -74,6 +74,7 @@ _TEMPLATE = _ENV.from_string("""\
   <div class="cluster-header">
     <h2>{{ cr.cluster_name }} &mdash; {{ cr.project_name }}</h2>
     <span class="status-pill {{ cr.overall_status }}">{{ cr.overall_status }}</span>
+    {% if cr.topology %}<div class="topology">Topology: {{ cr.topology.summary_line() }}</div>{% endif %}
   </div>
 
   {% for section in cr.sections %}

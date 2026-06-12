@@ -88,6 +88,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--rate-limit; parallelism only helps once rate-limit is bumped above "
         "the network round-trip rate.",
     )
+    parser.add_argument(
+        "--min-status",
+        choices=["GREEN", "INFO", "WARN", "RED"],
+        default="GREEN",
+        dest="min_status",
+        help="Filter check lines in the txt output to those at or above the "
+        "given status. GREEN (default) shows everything; WARN gives a brief "
+        "report with only WARN/RED findings — useful for pasting into LLMs "
+        "with character limits (e.g. GitHub Copilot's 128K). Cluster header, "
+        "summary, and topology line are always included.",
+    )
     return parser
 
 
@@ -118,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         baseline_lookback=args.baseline_lookback,
         rate_limit=args.rate_limit,
         max_workers=args.max_workers,
+        min_status=args.min_status,
     )
 
     try:

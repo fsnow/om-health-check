@@ -15,6 +15,7 @@ from om_health_check.models import (
     ClusterReport,
     Report,
     Section,
+    Topology,
 )
 from om_health_check.checks import connectivity, compute, disk, cache, workload
 from om_health_check.checks import replication, connections, backup, version
@@ -201,6 +202,7 @@ def _check_cluster(client, project, cluster) -> ClusterReport:
         cluster_id=cluster.id,
         project_name=project.name,
         project_id=project.id,
+        topology=_compute_topology(cluster, hosts),
     )
 
     for section_name, check_fn in CHECK_SECTIONS:
@@ -237,21 +239,55 @@ def _check_cluster(client, project, cluster) -> ClusterReport:
     return cr
 
 
+def _compute_topology(cluster, hosts) -> Topology:
+    """Summarize cluster shape: total nodes, role mix, and shard count."""
+    role_counts: dict[str, int] = {}
+    shard_names: set[str] = set()
+    cluster_type = getattr(cluster, "type_name", "") or "REPLICA_SET"
+    for h in hosts:
+        role = h.replica_state_name or h.type_name or "UNKNOWN"
+        role_counts[role] = role_counts.get(role, 0) + 1
+        # shardName is the right discriminator: per-shard for shard data nodes,
+        # null for config servers + mongos
+        shard_name = getattr(h, "shard_name", None)
+        if shard_name:
+            shard_names.add(shard_name)
+    shard_count = len(shard_names) if cluster_type == "SHARDED_REPLICA_SET" else 0
+    return Topology(
+        node_count=len(hosts),
+        cluster_type=cluster_type,
+        role_counts=role_counts,
+        shard_count=shard_count,
+    )
+
+
 def _render(report: Report, config: Config):
     """Render the report in all requested formats.
 
     Single format prints to stdout. Multiple formats write to separate files.
+    --min-status applies to txt output only.
     """
     if len(config.formats) == 1:
-        renderer = RENDERERS.get(config.formats[0])
-        if renderer:
-            print(renderer(report))
+        fmt = config.formats[0]
+        rendered = _render_one(report, fmt, config.min_status)
+        if rendered is not None:
+            print(rendered)
         return
 
     for fmt in config.formats:
-        renderer = RENDERERS.get(fmt)
-        if renderer:
-            filename = f"om-health-check-report.{fmt}"
-            with open(filename, "w") as f:
-                f.write(renderer(report))
-            print(f"Wrote {filename}", file=sys.stderr)
+        rendered = _render_one(report, fmt, config.min_status)
+        if rendered is None:
+            continue
+        filename = f"om-health-check-report.{fmt}"
+        with open(filename, "w") as f:
+            f.write(rendered)
+        print(f"Wrote {filename}", file=sys.stderr)
+
+
+def _render_one(report: Report, fmt: str, min_status: str) -> str | None:
+    renderer = RENDERERS.get(fmt)
+    if renderer is None:
+        return None
+    if fmt == "txt":
+        return renderer(report, min_status=min_status)
+    return renderer(report)

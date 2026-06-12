@@ -16,6 +16,7 @@ class Config:
     baseline_lookback: str | None = None  # e.g. "7d", "4h", "30m"; None = default 7d
     rate_limit: float = 2.0  # OM API requests/second (default conservative)
     max_workers: int = 10  # threads for per-host parallelism
+    min_status: str = "GREEN"  # GREEN (all) | INFO | WARN | RED — txt-only filter
 
     def __post_init__(self):
         if self.formats is None:

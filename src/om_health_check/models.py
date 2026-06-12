@@ -111,6 +111,40 @@ class Section:
 
 
 @dataclass
+class Topology:
+    """Cluster shape — node count, type, role breakdown."""
+
+    node_count: int = 0
+    cluster_type: str = ""        # e.g. REPLICA_SET, SHARDED_REPLICA_SET
+    role_counts: dict[str, int] = field(default_factory=dict)
+    shard_count: int = 0          # 0 for non-sharded
+
+    def summary_line(self) -> str:
+        roles = ", ".join(
+            f"{count} {role}"
+            for role, count in sorted(self.role_counts.items(), key=lambda x: (-x[1], x[0]))
+        )
+        parts = [f"{self.node_count} nodes"]
+        if self.cluster_type and self.cluster_type != "REPLICA_SET":
+            parts.append(f"({self.cluster_type})")
+        if self.shard_count:
+            shard_word = "shard" if self.shard_count == 1 else "shards"
+            parts.append(f"— {self.shard_count} {shard_word},")
+        if roles:
+            connector = "" if (self.shard_count or self.cluster_type != "REPLICA_SET") else "—"
+            parts.append(f"{connector} {roles}".lstrip())
+        return " ".join(parts)
+
+    def to_dict(self) -> dict:
+        return {
+            "node_count": self.node_count,
+            "cluster_type": self.cluster_type,
+            "role_counts": self.role_counts,
+            "shard_count": self.shard_count,
+        }
+
+
+@dataclass
 class ClusterReport:
     """Health check results for a single cluster."""
 
@@ -119,6 +153,7 @@ class ClusterReport:
     project_name: str
     project_id: str
     timestamp: str = ""
+    topology: Topology | None = None
     sections: list[Section] = field(default_factory=list)
 
     def __post_init__(self):
@@ -138,6 +173,7 @@ class ClusterReport:
             "project_name": self.project_name,
             "project_id": self.project_id,
             "timestamp": self.timestamp,
+            "topology": self.topology.to_dict() if self.topology else None,
             "overall_status": self.overall_status,
             "sections": [s.to_dict() for s in self.sections],
         }

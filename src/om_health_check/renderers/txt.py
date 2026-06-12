@@ -9,9 +9,14 @@ def render(report: Report) -> str:
     lines = []
     lines.append("=" * 72)
     lines.append("OM HEALTH CHECK REPORT")
-    lines.append(f"Generated: {report.generated_at}")
+    lines.append(f"Started:     {report.started_at}")
+    if report.finished_at:
+        lines.append(f"Finished:    {report.finished_at}")
+        elapsed = report.elapsed_seconds
+        if elapsed is not None:
+            lines.append(f"Elapsed:     {elapsed:.1f}s")
     lines.append(f"Ops Manager: {report.om_url}")
-    lines.append(f"Overall: [{report.overall_status}]")
+    lines.append(f"Overall:     [{report.overall_status}]")
     lines.append("=" * 72)
 
     for cr in report.clusters:

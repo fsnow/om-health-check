@@ -61,7 +61,9 @@ _TEMPLATE = _ENV.from_string("""\
 <div class="report-header">
   <h1>OM Health Check Report</h1>
   <div class="meta">
-    Generated: {{ report.generated_at }} &nbsp;|&nbsp;
+    Started: {{ report.started_at }} &nbsp;|&nbsp;
+    {% if report.finished_at %}Finished: {{ report.finished_at }} &nbsp;|&nbsp;
+    Elapsed: {{ "%.1f"|format(report.elapsed_seconds) }}s &nbsp;|&nbsp;{% endif %}
     Ops Manager: {{ report.om_url }} &nbsp;|&nbsp;
     Overall: <span class="status-pill {{ report.overall_status }}">{{ report.overall_status }}</span>
   </div>

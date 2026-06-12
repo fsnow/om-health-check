@@ -148,12 +148,13 @@ class Report:
     """Top-level report containing results for one or more clusters."""
 
     om_url: str
-    generated_at: str = ""
+    started_at: str = ""
+    finished_at: str = ""
     clusters: list[ClusterReport] = field(default_factory=list)
 
     def __post_init__(self):
-        if not self.generated_at:
-            self.generated_at = datetime.now(timezone.utc).isoformat()
+        if not self.started_at:
+            self.started_at = datetime.now(timezone.utc).isoformat()
 
     @property
     def overall_status(self) -> str:
@@ -161,10 +162,21 @@ class Report:
             return STATUS_GREEN
         return worst_status(*(c.overall_status for c in self.clusters))
 
+    @property
+    def elapsed_seconds(self) -> float | None:
+        """Wall-clock seconds from started_at to finished_at, or None if not finished."""
+        if not self.finished_at:
+            return None
+        start = datetime.fromisoformat(self.started_at)
+        end = datetime.fromisoformat(self.finished_at)
+        return (end - start).total_seconds()
+
     def to_dict(self) -> dict:
         return {
             "om_url": self.om_url,
-            "generated_at": self.generated_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "elapsed_seconds": self.elapsed_seconds,
             "overall_status": self.overall_status,
             "clusters": [c.to_dict() for c in self.clusters],
         }

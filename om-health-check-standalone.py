@@ -747,12 +747,13 @@ class ClusterReport:
 @dataclass
 class Report:
     om_url: str
-    generated_at: str = ""
+    started_at: str = ""
+    finished_at: str = ""
     clusters: List[ClusterReport] = field(default_factory=list)
 
     def __post_init__(self):
-        if not self.generated_at:
-            self.generated_at = datetime.now(timezone.utc).isoformat()
+        if not self.started_at:
+            self.started_at = datetime.now(timezone.utc).isoformat()
 
     @property
     def overall_status(self) -> str:
@@ -760,10 +761,20 @@ class Report:
             return STATUS_GREEN
         return worst_status(*(c.overall_status for c in self.clusters))
 
+    @property
+    def elapsed_seconds(self):
+        if not self.finished_at:
+            return None
+        start = datetime.fromisoformat(self.started_at)
+        end = datetime.fromisoformat(self.finished_at)
+        return (end - start).total_seconds()
+
     def to_dict(self) -> dict:
         return {
             "om_url": self.om_url,
-            "generated_at": self.generated_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "elapsed_seconds": self.elapsed_seconds,
             "overall_status": self.overall_status,
             "clusters": [c.to_dict() for c in self.clusters],
         }
@@ -1833,9 +1844,10 @@ def _check_backup(client, project_id, cluster, hosts) -> Section:
 
 # Minimum MongoDB 7.0+ versions considered safe (CVE coverage).
 MINIMUM_SAFE_VERSIONS = {
-    "7.0": "7.0.29",
-    "8.0": "8.0.18",
-    "8.2": "8.2.4",
+    "7.0": "7.0.37",
+    "8.0": "8.0.26",
+    "8.2": "8.2.11",
+    "8.3": "8.3.4",
 }
 
 
@@ -1862,24 +1874,24 @@ def _check_version(client, project_id, cluster, hosts) -> Section:
             parsed = Version(ver)
         except InvalidVersion:
             section.cluster_checks.append(Check(
-                name="Known-bad version", status=STATUS_INFO,
+                name="Version check", status=STATUS_INFO,
                 message=f"Could not parse version: {ver}"))
             continue
         major_minor = f"{parsed.major}.{parsed.minor}"
         min_safe = MINIMUM_SAFE_VERSIONS.get(major_minor)
         if not min_safe:
             section.cluster_checks.append(Check(
-                name="Known-bad version", status=STATUS_INFO,
+                name="Version check", status=STATUS_INFO,
                 message=f"{ver} — no known-bad version data for {major_minor}"))
             continue
         if parsed < Version(min_safe):
             section.cluster_checks.append(Check(
-                name="Known-bad version", status=STATUS_RED,
+                name="Version check", status=STATUS_RED,
                 message=f"{ver} is below minimum safe version ({min_safe}) — "
                         "upgrade recommended for CVE coverage"))
         else:
             section.cluster_checks.append(Check(
-                name="Known-bad version", status=STATUS_GREEN,
+                name="Version check", status=STATUS_GREEN,
                 message=f"{ver} meets minimum safe version ({min_safe})"))
     return section
 
@@ -1897,9 +1909,14 @@ def _render_txt(report: Report) -> str:
     lines = []
     lines.append("=" * 72)
     lines.append("OM HEALTH CHECK REPORT")
-    lines.append(f"Generated: {report.generated_at}")
+    lines.append(f"Started:     {report.started_at}")
+    if report.finished_at:
+        lines.append(f"Finished:    {report.finished_at}")
+        elapsed = report.elapsed_seconds
+        if elapsed is not None:
+            lines.append(f"Elapsed:     {elapsed:.1f}s")
     lines.append(f"Ops Manager: {report.om_url}")
-    lines.append(f"Overall: [{report.overall_status}]")
+    lines.append(f"Overall:     [{report.overall_status}]")
     lines.append("=" * 72)
 
     for cr in report.clusters:
@@ -2014,7 +2031,9 @@ _HTML_TEMPLATE = _HTML_ENV.from_string("""\
 <div class="report-header">
   <h1>OM Health Check Report</h1>
   <div class="meta">
-    Generated: {{ report.generated_at }} &nbsp;|&nbsp;
+    Started: {{ report.started_at }} &nbsp;|&nbsp;
+    {% if report.finished_at %}Finished: {{ report.finished_at }} &nbsp;|&nbsp;
+    Elapsed: {{ "%.1f"|format(report.elapsed_seconds) }}s &nbsp;|&nbsp;{% endif %}
     Ops Manager: {{ report.om_url }} &nbsp;|&nbsp;
     Overall: <span class="status-pill {{ report.overall_status }}">{{ report.overall_status }}</span>
   </div>
@@ -2193,6 +2212,7 @@ def run(config: Config) -> Report:
             cluster_checks=[Check(name="OM API reachability", status=STATUS_RED,
                                   message=message)]))
         report.clusters.append(cr)
+        report.finished_at = datetime.now(timezone.utc).isoformat()
         _render_report(report, config)
         return report
 
@@ -2235,6 +2255,7 @@ def run(config: Config) -> Report:
             for cluster in clusters:
                 report.clusters.append(_check_cluster(client, project, cluster))
 
+    report.finished_at = datetime.now(timezone.utc).isoformat()
     _render_report(report, config)
     return report
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 
 from opsmanager.errors import OpsManagerAuthenticationError, OpsManagerForbiddenError
 
@@ -86,6 +87,7 @@ def run(config: Config) -> Report:
             )
         )
         report.clusters.append(cluster_report)
+        report.finished_at = datetime.now(timezone.utc).isoformat()
         _render(report, config)
         return report
 
@@ -164,6 +166,7 @@ def run(config: Config) -> Report:
                 cluster_report = _check_cluster(client, project, cluster)
                 report.clusters.append(cluster_report)
 
+    report.finished_at = datetime.now(timezone.utc).isoformat()
     _render(report, config)
     return report
 

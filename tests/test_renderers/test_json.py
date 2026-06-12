@@ -54,10 +54,12 @@ class TestJsonRenderer:
         parsed = json.loads(render(make_sample_report()))
         assert parsed["om_url"] == "https://om.example.com"
 
-    def test_generated_at(self):
+    def test_timing_fields(self):
         parsed = json.loads(render(make_sample_report()))
-        assert "generated_at" in parsed
-        assert len(parsed["generated_at"]) > 0
+        assert "started_at" in parsed
+        assert len(parsed["started_at"]) > 0
+        assert "finished_at" in parsed
+        assert "elapsed_seconds" in parsed
 
     def test_warn_status_present(self):
         parsed = json.loads(render(make_sample_report()))

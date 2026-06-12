@@ -12,13 +12,15 @@ from om_health_check.models import STATUS_GREEN, STATUS_RED, Check, Section
 # Minimum safe versions — below these have known CVEs or critical bugs.
 # Key is "major.minor", value is minimum safe patch version.
 MINIMUM_SAFE_VERSIONS = {
-    "7.0": "7.0.29",
-    "8.0": "8.0.18",
-    "8.2": "8.2.4",
+    "7.0": "7.0.37",
+    "8.0": "8.0.26",
+    "8.2": "8.2.11",
+    "8.3": "8.3.4",
 }
 
 # Reasons for the minimum versions
 VERSION_ISSUES = (
+    "CVE-2026-11933 (use-after-free in server-side JS BSON-to-array, info disclosure / DoS), "
     "CVE-2026-25613 (CVSS 7.1, query planner segfault), "
     "CVE-2026-1849/1850 (CVSS 7.1, OOM/DoS), "
     "SERVER-94315 (duplicate records in sharded queries)"
@@ -62,7 +64,7 @@ def run(
             )
         )
 
-    # Known-bad version check
+    # Version check — flag known-bad MongoDB versions
     for version_str, host_list in versions.items():
         if version_str == "unknown":
             continue
@@ -85,7 +87,7 @@ def run(
         if v < min_safe_v:
             section.cluster_checks.append(
                 Check(
-                    name="Known-bad version",
+                    name="Version check",
                     status=STATUS_RED,
                     value=version_str,
                     message=(
@@ -98,7 +100,7 @@ def run(
         else:
             section.cluster_checks.append(
                 Check(
-                    name="Known-bad version",
+                    name="Version check",
                     status=STATUS_GREEN,
                     value=version_str,
                     message=f"{version_str} meets minimum safe version ({min_safe})",

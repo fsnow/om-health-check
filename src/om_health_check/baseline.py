@@ -226,7 +226,14 @@ def _build_message(
     elif status == STATUS_INFO and thresh.mode == MODE_AND:
         parts.append(f"— above threshold ({thresh.red}) but within normal baseline range")
     elif status == STATUS_WARN:
-        parts.append(f"— approaching threshold (warn: {thresh.warn})")
+        if thresh.warn is not None:
+            parts.append(f"— approaching threshold (warn: {thresh.warn})")
+        elif thresh.red is not None:
+            # MODE_AND degraded RED→WARN because baseline is unavailable: above red
+            # threshold but we can't confirm deviation, so we cap at WARN.
+            parts.append(
+                f"— above threshold ({thresh.red}); cannot confirm RED without baseline"
+            )
 
     return " ".join(parts)
 

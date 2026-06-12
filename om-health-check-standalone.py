@@ -1180,7 +1180,12 @@ def _build_message(metric_name, current, baseline, deviation, thresh, status) ->
     elif status == STATUS_INFO and thresh.mode == MODE_AND:
         parts.append(f"— above threshold ({thresh.red}) but within normal baseline range")
     elif status == STATUS_WARN:
-        parts.append(f"— approaching threshold (warn: {thresh.warn})")
+        if thresh.warn is not None:
+            parts.append(f"— approaching threshold (warn: {thresh.warn})")
+        elif thresh.red is not None:
+            parts.append(
+                f"— above threshold ({thresh.red}); cannot confirm RED without baseline"
+            )
     return " ".join(parts)
 
 

@@ -292,6 +292,20 @@ def _baseline_time_range() -> tuple[str, str]:
     return baseline_start.isoformat(), baseline_end.isoformat()
 
 
+# OM returns several metrics in units that don't match our thresholds/labels.
+# Convert at extraction so the internal value matches the threshold and the
+# display label across the whole pipeline.
+#   - SWAP_USAGE_USED/FREE: OM returns KILOBYTES; we want MB
+#   - SYSTEM_MEMORY_AVAILABLE: OM returns KILOBYTES; we want MB
+#   - OPLOG_MASTER_TIME: OM returns SECONDS; we want hours (threshold is 24/36 hr)
+_UNIT_CONVERSIONS: dict[str, float] = {
+    "SWAP_USAGE_USED": 1.0 / 1024,        # KB -> MB
+    "SWAP_USAGE_FREE": 1.0 / 1024,        # KB -> MB
+    "SYSTEM_MEMORY_AVAILABLE": 1.0 / 1024,  # KB -> MB
+    "OPLOG_MASTER_TIME": 1.0 / 3600,      # seconds -> hours
+}
+
+
 def _extract_value(measurements: ProcessMeasurements, metric_name: str) -> float | None:
     """Extract the mean of non-null data points for a metric from measurements.
 
@@ -305,7 +319,9 @@ def _extract_value(measurements: ProcessMeasurements, metric_name: str) -> float
             values = [dp.value for dp in m.data_points if dp.value is not None]
             if not values:
                 return None
-            return sum(values) / len(values)
+            avg = sum(values) / len(values)
+            factor = _UNIT_CONVERSIONS.get(metric_name)
+            return avg * factor if factor is not None else avg
     return None
 
 

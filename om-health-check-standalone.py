@@ -1230,6 +1230,16 @@ def _baseline_time_range():
     return baseline_start.isoformat(), baseline_end.isoformat()
 
 
+# OM returns several metrics in units that don't match our thresholds/labels.
+# Convert at extraction so internal value, threshold value, and display label all align.
+_UNIT_CONVERSIONS = {
+    "SWAP_USAGE_USED": 1.0 / 1024,        # KB -> MB
+    "SWAP_USAGE_FREE": 1.0 / 1024,        # KB -> MB
+    "SYSTEM_MEMORY_AVAILABLE": 1.0 / 1024,  # KB -> MB
+    "OPLOG_MASTER_TIME": 1.0 / 3600,      # seconds -> hours
+}
+
+
 def _extract_value(measurements, metric_name):
     """Mean of non-null data points. With PT1M/PT1H this yields a 1h average."""
     for m in measurements.measurements:
@@ -1237,7 +1247,9 @@ def _extract_value(measurements, metric_name):
             values = [dp.value for dp in m.data_points if dp.value is not None]
             if not values:
                 return None
-            return sum(values) / len(values)
+            avg = sum(values) / len(values)
+            factor = _UNIT_CONVERSIONS.get(metric_name)
+            return avg * factor if factor is not None else avg
     return None
 
 

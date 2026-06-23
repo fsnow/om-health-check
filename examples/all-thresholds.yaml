@@ -88,22 +88,26 @@ thresholds:
   # Section 3: Disk Resources
   # -----------------------------------------------------------------------
 
-  # Disk read/write latency (ms) — RED only if above 10 ms AND 3x baseline.
-  # AND mode (not OR) so that a 6x jump from 0.16 ms to 1 ms doesn't fire RED:
-  # 1 ms latency is healthy regardless of how much it grew.
+  # Disk read/write latency (ms). RED if above 10 ms OR 3x baseline AND
+  # current value is above 2 ms. The relevance_floor of 2 ms suppresses
+  # deviation-based RED when latency is still healthy in absolute terms —
+  # a 6x jump from 0.16 ms to 1 ms is noise; a 6x jump from 5 ms to 30 ms
+  # is a real signal.
   DISK_PARTITION_LATENCY_READ:
     red: 10.0
     warn: 5.0
     direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 2.0
+    mode: or
 
   DISK_PARTITION_LATENCY_WRITE:
     red: 10.0
     warn: 5.0
     direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 2.0
+    mode: or
 
   # Disk IOPS — RED above 950 (assumes gp2/gp3 IOPS ceiling near 1000).
   DISK_PARTITION_IOPS_READ:
@@ -257,29 +261,34 @@ thresholds:
     deviation: 3.0
     mode: and
 
-  # Average operation execution time (ms) — RED only if above 100 ms AND 2x
-  # baseline. AND mode (not OR) so that a 4x jump from 0.34 ms to 1.55 ms
-  # doesn't fire RED: 1.55 ms is healthy regardless of multiplier.
+  # Average operation execution time (ms). RED if above 100 ms OR 2x baseline
+  # AND current value is above 20 ms. The relevance_floor of 20 ms suppresses
+  # deviation-based RED when latency is still healthy in absolute terms —
+  # a 4x jump from 0.34 ms to 1.55 ms is noise; a 4x jump from 30 ms to 120 ms
+  # is a real signal (and the 100 ms absolute threshold also catches it).
   OP_EXECUTION_TIME_READS:
     red: 100
     warn: 50
     direction: above
     deviation: 2.0
-    mode: and
+    relevance_floor: 20
+    mode: or
 
   OP_EXECUTION_TIME_WRITES:
     red: 100
     warn: 50
     direction: above
     deviation: 2.0
-    mode: and
+    relevance_floor: 20
+    mode: or
 
   OP_EXECUTION_TIME_COMMANDS:
     red: 100
     warn: 50
     direction: above
     deviation: 2.0
-    mode: and
+    relevance_floor: 20
+    mode: or
 
   # Global lock queue depth — RED if sustained queuing (> 10 readers or writers,
   # > 20 total) OR 3x baseline.

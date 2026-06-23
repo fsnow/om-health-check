@@ -838,6 +838,9 @@ class Threshold:
     direction: str = DIR_ABOVE
     deviation: Optional[float] = None
     mode: str = MODE_ABSOLUTE
+    # If set, deviation check is suppressed when current value is below
+    # this floor (or above it for DIR_BELOW) — value too small to compare.
+    relevance_floor: Optional[float] = None
 
 
 # Section 1: Connectivity & Infrastructure
@@ -861,9 +864,11 @@ SWAP_USAGE_USED = Threshold(red=100, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 
 # Section 3: Disk Resources
 DISK_PARTITION_LATENCY_READ = Threshold(
-    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
+    red=10.0, warn=5.0, direction=DIR_ABOVE,
+    deviation=3.0, relevance_floor=2.0, mode=MODE_OR)
 DISK_PARTITION_LATENCY_WRITE = Threshold(
-    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
+    red=10.0, warn=5.0, direction=DIR_ABOVE,
+    deviation=3.0, relevance_floor=2.0, mode=MODE_OR)
 DISK_PARTITION_IOPS_READ = Threshold(red=950, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 DISK_PARTITION_IOPS_WRITE = Threshold(red=950, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 DISK_PARTITION_SPACE_PERCENT_FREE = Threshold(
@@ -925,11 +930,14 @@ OPCOUNTER_INSERT = Threshold(
     red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
 )
 OP_EXECUTION_TIME_READS = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
+    red=100, warn=50, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=20, mode=MODE_OR)
 OP_EXECUTION_TIME_WRITES = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
+    red=100, warn=50, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=20, mode=MODE_OR)
 OP_EXECUTION_TIME_COMMANDS = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
+    red=100, warn=50, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=20, mode=MODE_OR)
 GLOBAL_LOCK_CURRENT_QUEUE_READERS = Threshold(
     red=10, warn=5, direction=DIR_ABOVE, deviation=3.0, mode=MODE_OR)
 GLOBAL_LOCK_CURRENT_QUEUE_WRITERS = Threshold(
@@ -1085,6 +1093,13 @@ def _crosses_warn(value, thresh):
 def _exceeds_deviation(current, baseline, thresh):
     if thresh.deviation is None or baseline is None:
         return False
+    if thresh.relevance_floor is not None:
+        if thresh.direction == DIR_BELOW:
+            if current >= thresh.relevance_floor:
+                return False
+        else:
+            if current < thresh.relevance_floor:
+                return False
     if baseline == 0:
         return current != 0
     ratio = current / baseline

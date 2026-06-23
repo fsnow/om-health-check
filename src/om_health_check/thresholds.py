@@ -40,6 +40,12 @@ class Threshold:
     direction: str = DIR_ABOVE
     deviation: float | None = None
     mode: str = MODE_ABSOLUTE
+    # If set, the deviation check is gated on the current value being at least
+    # this large (or as small, for DIR_BELOW). Below this floor, deviation
+    # comparisons are ignored regardless of mode — they're considered noise.
+    # Lets a metric express "OP_EXECUTION_TIME_READS jumping 5x from 0.2ms to
+    # 1ms is noise, but 5x from 30ms to 150ms is a real signal."
+    relevance_floor: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -76,10 +82,12 @@ SWAP_USAGE_USED = Threshold(red=100, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 # ---------------------------------------------------------------------------
 
 DISK_PARTITION_LATENCY_READ = Threshold(
-    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    red=10.0, warn=5.0, direction=DIR_ABOVE,
+    deviation=3.0, relevance_floor=2.0, mode=MODE_OR,
 )
 DISK_PARTITION_LATENCY_WRITE = Threshold(
-    red=10.0, warn=5.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    red=10.0, warn=5.0, direction=DIR_ABOVE,
+    deviation=3.0, relevance_floor=2.0, mode=MODE_OR,
 )
 DISK_PARTITION_IOPS_READ = Threshold(red=950, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 DISK_PARTITION_IOPS_WRITE = Threshold(red=950, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
@@ -158,13 +166,16 @@ OPCOUNTER_INSERT = Threshold(
 )
 
 OP_EXECUTION_TIME_READS = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND,
+    red=100, warn=50, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=20, mode=MODE_OR,
 )
 OP_EXECUTION_TIME_WRITES = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND,
+    red=100, warn=50, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=20, mode=MODE_OR,
 )
 OP_EXECUTION_TIME_COMMANDS = Threshold(
-    red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND,
+    red=100, warn=50, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=20, mode=MODE_OR,
 )
 
 GLOBAL_LOCK_CURRENT_QUEUE_READERS = Threshold(

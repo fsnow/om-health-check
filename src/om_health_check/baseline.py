@@ -73,9 +73,24 @@ def _crosses_warn(value: float, thresh: Threshold) -> bool:
 def _exceeds_deviation(
     current: float, baseline: float | None, thresh: Threshold
 ) -> bool:
-    """Check if current value exceeds baseline by the configured deviation multiplier."""
+    """Check if current value exceeds baseline by the configured deviation multiplier.
+
+    If a relevance_floor is set, the deviation check is suppressed when the
+    current value is below that floor (or above it, for DIR_BELOW metrics):
+    we consider the value too small/large to meaningfully compare to baseline.
+    """
     if thresh.deviation is None or baseline is None:
         return False
+    if thresh.relevance_floor is not None:
+        if thresh.direction == DIR_BELOW:
+            # For DIR_BELOW metrics, "noise floor" means current is still high
+            # enough that any drop isn't worth flagging (above the floor).
+            if current >= thresh.relevance_floor:
+                return False
+        else:
+            # For DIR_ABOVE, suppress if current hasn't climbed past the floor.
+            if current < thresh.relevance_floor:
+                return False
     if baseline == 0:
         return current != 0
     ratio = current / baseline

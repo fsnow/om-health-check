@@ -329,11 +329,17 @@ class TestModeOr:
         r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 12.0, 3.0)  # > 10 and 4x > 3.0
         assert r.status == STATUS_RED
 
-    def test_disk_latency_deviation_only_warns(self):
-        # 7ms is below red=10 but above warn=5; deviation alone no longer
-        # triggers RED under mode=AND. WARN reflects the elevated value.
-        r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 7.0, 2.0)  # < 10 but 3.5x > 3.0
-        assert r.status == STATUS_WARN
+    def test_disk_latency_deviation_above_floor_red(self):
+        # 7ms is below red=10 but above warn=5 AND above relevance_floor=2;
+        # 3.5x baseline exceeds dev=3.0, so deviation fires under mode=OR.
+        r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 7.0, 2.0)
+        assert r.status == STATUS_RED
+
+    def test_disk_latency_deviation_below_floor_green(self):
+        # 1ms with 5x baseline (0.2 ms): below relevance_floor=2 so the
+        # deviation is treated as noise — no signal.
+        r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 1.0, 0.2)
+        assert r.status == STATUS_GREEN
 
     def test_disk_latency_green(self):
         r = evaluate_metric("DISK_PARTITION_LATENCY_READ", 3.0, 2.5)  # < 10, 1.2x < 3.0
@@ -351,11 +357,16 @@ class TestModeOr:
         r = evaluate_metric("OP_EXECUTION_TIME_READS", 120, 50)  # > 100
         assert r.status == STATUS_RED
 
-    def test_op_execution_time_deviation_warns(self):
-        # 60ms is below red=100 but above warn=50; deviation alone no longer
-        # triggers RED under mode=AND. WARN reflects the elevated value.
-        r = evaluate_metric("OP_EXECUTION_TIME_READS", 60, 25)  # < 100 but 2.4x >= 2.0
-        assert r.status == STATUS_WARN
+    def test_op_execution_time_deviation_above_floor_red(self):
+        # 60ms above relevance_floor=20, 2.4x baseline exceeds dev=2.0
+        # → deviation fires RED under mode=OR.
+        r = evaluate_metric("OP_EXECUTION_TIME_READS", 60, 25)
+        assert r.status == STATUS_RED
+
+    def test_op_execution_time_deviation_below_floor_green(self):
+        # 1.5 ms with 5x baseline (0.3 ms): below relevance_floor=20 — noise.
+        r = evaluate_metric("OP_EXECUTION_TIME_READS", 1.5, 0.3)
+        assert r.status == STATUS_GREEN
 
     def test_op_execution_time_green(self):
         r = evaluate_metric("OP_EXECUTION_TIME_READS", 30, 25)

@@ -18,7 +18,7 @@ from om_health_check.models import (
     Topology,
 )
 from om_health_check.checks import connectivity, compute, disk, cache, workload
-from om_health_check.checks import replication, connections, backup, version
+from om_health_check.checks import oplog, replication, connections, backup, version
 from om_health_check.renderers import txt, json_renderer, html
 
 _PERMISSION_HINT = (
@@ -33,6 +33,7 @@ CHECK_SECTIONS = [
     ("Disk Resources", disk.run),
     ("Cache Resources", cache.run),
     ("Database Activity & Workload", workload.run),
+    ("Oplog", oplog.run),
     ("Replication", replication.run),
     ("Connections", connections.run),
     ("Backup", backup.run),

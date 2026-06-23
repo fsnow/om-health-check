@@ -193,7 +193,7 @@ class TestModeAbsolute:
         assert r.status == STATUS_RED
 
     def test_replication_lag_green(self):
-        r = evaluate_metric("OPLOG_REPLICATION_LAG_TIME", 2, 3)
+        r = evaluate_metric("OPLOG_REPLICATION_LAG_TIME", 1, 3)  # < 2 warn
         assert r.status == STATUS_GREEN
 
     def test_swap_red(self):

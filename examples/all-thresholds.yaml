@@ -308,24 +308,29 @@ thresholds:
   # Section 6: Replication
   # -----------------------------------------------------------------------
 
-  # Secondary replication lag (seconds). RED above 60s, WARN above 10s.
+  # Secondary replication lag (seconds). Outside of post-restart catch-up
+  # windows, lag should be near zero. RED above 10s, WARN above 2s.
   OPLOG_REPLICATION_LAG_TIME:
-    red: 60
-    warn: 10
+    red: 10
+    warn: 2
     direction: above
     mode: absolute
 
-  # Oplog window (hours). Direction=below. RED below 24h, WARN below 36h.
+  # Oplog window (hours of write history). Direction=below. RED below 24h,
+  # WARN below 36h. Note: OM returns this in SECONDS; we convert to hours
+  # at extraction so the threshold value matches the display label.
   OPLOG_MASTER_TIME:
     red: 24
     warn: 36
     direction: below
     mode: absolute
 
-  # Oplog write rate (GB/hour) — baseline-only spike detection.
+  # Oplog write rate (GB/hour) — informational only. Workload-specific, so
+  # no default thresholds: surface the number, let the operator judge.
+  # (Pre-2026-06-23 default was deviation=3.0 mode=baseline, which fired on
+  # any 3x spike and produced noise — removed for incident-triage use.)
   OPLOG_RATE_GB_PER_HOUR:
-    deviation: 3.0
-    mode: baseline
+    mode: absolute
 
   # -----------------------------------------------------------------------
   # Section 7: Connections

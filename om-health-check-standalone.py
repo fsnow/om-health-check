@@ -937,12 +937,13 @@ GLOBAL_LOCK_CURRENT_QUEUE_WRITERS = Threshold(
 GLOBAL_LOCK_CURRENT_QUEUE_TOTAL = Threshold(
     red=20, warn=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_OR)
 
-# Section 6: Replication
+# Section 6: Oplog (window + write rate) + Replication (lag)
 OPLOG_REPLICATION_LAG_TIME = Threshold(
-    red=60, warn=10, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
+    red=10, warn=2, direction=DIR_ABOVE, mode=MODE_ABSOLUTE)
 OPLOG_MASTER_TIME = Threshold(
     red=24, warn=36, direction=DIR_BELOW, mode=MODE_ABSOLUTE)
-OPLOG_RATE_GB_PER_HOUR = Threshold(deviation=3.0, mode=MODE_BASELINE)
+# Informational only — workload-specific, no useful default thresholds.
+OPLOG_RATE_GB_PER_HOUR = Threshold(mode=MODE_ABSOLUTE)
 
 # Section 7: Connections
 CONNECTIONS = Threshold(
@@ -1725,36 +1726,63 @@ def _check_performance_advisor(client, project_id, host, hs):
                                message="No index suggestions"))
 
 
-# -- 5.6 Replication ---------------------------------------------------------
+# -- 5.6 Oplog (window + write rate, per replica member) --------------------
 
-_REPL_SECONDARY_METRICS = ["OPLOG_REPLICATION_LAG_TIME"]
-_REPL_PRIMARY_METRICS = ["OPLOG_MASTER_TIME", "OPLOG_RATE_GB_PER_HOUR"]
-_REPL_UNITS = {
-    "OPLOG_REPLICATION_LAG_TIME": "seconds",
+_OPLOG_METRICS = ["OPLOG_MASTER_TIME", "OPLOG_RATE_GB_PER_HOUR"]
+_OPLOG_UNITS = {
     "OPLOG_MASTER_TIME": "hours",
     "OPLOG_RATE_GB_PER_HOUR": "GB/hr",
 }
 
 
+def _check_oplog(client, project_id, cluster, hosts) -> Section:
+    section = Section(name="Oplog")
+    replica_members = [h for h in hosts if h.is_primary or h.is_secondary]
+    results = _parallel_host_check(
+        lambda h: _oplog_one_host(client, project_id, h), replica_members)
+    section.hosts = [hs for hs in results if hs is not None]
+    return section
+
+
+def _oplog_one_host(client, project_id, host):
+    hs = HostSection(host=host.host_port,
+                     role=host.replica_state_name or host.type_name or "UNKNOWN")
+    metrics = fetch_host_metrics(client.om, project_id, host.id, _OPLOG_METRICS)
+    for metric_name in _OPLOG_METRICS:
+        current, baseline = metrics.get(metric_name, (None, None))
+        result = evaluate_metric(metric_name, current, baseline)
+        hs.checks.append(Check(
+            name=metric_name, status=result.status, value=result.current_value,
+            units=_OPLOG_UNITS.get(metric_name, ""),
+            baseline_value=result.baseline_value,
+            baseline_deviation=result.deviation,
+            threshold=result.threshold.red if result.threshold else None,
+            message=result.message))
+    return hs
+
+
+# -- 5.7 Replication (per-secondary lag against primary) --------------------
+
+_REPL_METRICS = ["OPLOG_REPLICATION_LAG_TIME"]
+_REPL_UNITS = {
+    "OPLOG_REPLICATION_LAG_TIME": "seconds",
+}
+
+
 def _check_replication(client, project_id, cluster, hosts) -> Section:
     section = Section(name="Replication")
+    secondaries = [h for h in hosts if h.is_secondary]
     results = _parallel_host_check(
-        lambda h: _replication_one_host(client, project_id, h), hosts)
+        lambda h: _replication_one_host(client, project_id, h), secondaries)
     section.hosts = [hs for hs in results if hs is not None]
     return section
 
 
 def _replication_one_host(client, project_id, host):
-    if host.is_primary:
-        metric_names = _REPL_PRIMARY_METRICS
-    elif host.is_secondary:
-        metric_names = _REPL_SECONDARY_METRICS + _REPL_PRIMARY_METRICS
-    else:
-        return None  # skip arbiters and mongos
     hs = HostSection(host=host.host_port,
                      role=host.replica_state_name or host.type_name or "UNKNOWN")
-    metrics = fetch_host_metrics(client.om, project_id, host.id, metric_names)
-    for metric_name in metric_names:
+    metrics = fetch_host_metrics(client.om, project_id, host.id, _REPL_METRICS)
+    for metric_name in _REPL_METRICS:
         current, baseline = metrics.get(metric_name, (None, None))
         result = evaluate_metric(metric_name, current, baseline)
         hs.checks.append(Check(
@@ -2255,6 +2283,7 @@ _CHECK_SECTIONS = [
     ("Disk Resources", _check_disk),
     ("Cache Resources", _check_cache),
     ("Database Activity & Workload", _check_workload),
+    ("Oplog", _check_oplog),
     ("Replication", _check_replication),
     ("Connections", _check_connections),
     ("Backup", _check_backup),

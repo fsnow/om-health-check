@@ -1,7 +1,9 @@
-"""Section: Replication (per-secondary lag against primary).
+"""Section: Oplog (window + write rate, per replica member).
 
-Oplog metrics (window, write rate) live in a separate "Oplog" section —
-they're unrelated to replication lag.
+Separated from Replication because oplog window/rate and replication lag
+are unrelated dimensions — a tight oplog window says nothing about whether
+secondaries are caught up, and high lag says nothing about how much the
+oplog can hold.
 """
 
 from __future__ import annotations
@@ -14,11 +16,13 @@ from om_health_check.concurrency import parallel_host_check
 from om_health_check.models import Check, HostSection, Section
 
 _METRICS = [
-    "OPLOG_REPLICATION_LAG_TIME",
+    "OPLOG_MASTER_TIME",
+    "OPLOG_RATE_GB_PER_HOUR",
 ]
 
 _UNITS = {
-    "OPLOG_REPLICATION_LAG_TIME": "seconds",
+    "OPLOG_MASTER_TIME": "hours",
+    "OPLOG_RATE_GB_PER_HOUR": "GB/hr",
 }
 
 
@@ -28,10 +32,10 @@ def run(
     cluster: Cluster,
     hosts: list[Host],
 ) -> Section:
-    section = Section(name="Replication")
-    secondaries = [h for h in hosts if h.is_secondary]
+    section = Section(name="Oplog")
+    replica_members = [h for h in hosts if h.is_primary or h.is_secondary]
     results = parallel_host_check(
-        lambda h: _check_host(client, project_id, h), secondaries
+        lambda h: _check_host(client, project_id, h), replica_members
     )
     section.hosts = [hs for hs in results if hs is not None]
     return section

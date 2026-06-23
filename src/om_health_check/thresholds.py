@@ -181,13 +181,21 @@ GLOBAL_LOCK_CURRENT_QUEUE_TOTAL = Threshold(
 # Section 6: Replication
 # ---------------------------------------------------------------------------
 
+# Replication lag (per-secondary, seconds). Outside of post-restart catch-up
+# windows, lag should be near zero. RED if a secondary is more than 10s
+# behind; WARN at 2s.
 OPLOG_REPLICATION_LAG_TIME = Threshold(
-    red=60, warn=10, direction=DIR_ABOVE, mode=MODE_ABSOLUTE,
+    red=10, warn=2, direction=DIR_ABOVE, mode=MODE_ABSOLUTE,
 )
+# Oplog window (hours of write history retained). RED if under 24h of
+# buffer, WARN under 36h.
 OPLOG_MASTER_TIME = Threshold(
     red=24, warn=36, direction=DIR_BELOW, mode=MODE_ABSOLUTE,
 )
-OPLOG_RATE_GB_PER_HOUR = Threshold(deviation=3.0, mode=MODE_BASELINE)
+# Oplog write rate is informational only — "high" depends entirely on
+# the workload, and a baseline comparison just adds noise. No thresholds
+# means it shows up in the report without claiming a status.
+OPLOG_RATE_GB_PER_HOUR = Threshold(mode=MODE_ABSOLUTE)
 
 # ---------------------------------------------------------------------------
 # Section 7: Connections

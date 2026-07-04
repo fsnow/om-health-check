@@ -352,3 +352,32 @@ thresholds:
     direction: above
     deviation: 2.0
     mode: or
+
+
+# ---------------------------------------------------------------------------
+# Version Information
+# ---------------------------------------------------------------------------
+# The version check is configured separately from metric thresholds.
+version:
+
+  # Severity applied to version-currency findings — a node below its minimum
+  # safe patch version, or a cluster running mixed versions.
+  #   info  (default) — track and highlight, but don't treat as an incident
+  #   warn            — surface as a potential concern
+  #   red             — treat an out-of-date version as an active problem
+  severity: info
+
+  # Minimum safe patch version per major.minor line. A node below its line's
+  # entry is reported at the severity above. Lines listed here MERGE over the
+  # built-in defaults, so you only need to include lines you want to change.
+  # A major.minor line with no entry (built-in or here) produces no
+  # version-currency finding.
+  #
+  # 9.0 is listed pre-emptively with a 9.0.0 placeholder so the 9.0 line is
+  # recognized on upgrade; bump it when real 9.0 advisories are published.
+  minimum_safe_versions:
+    "7.0": "7.0.37"
+    "8.0": "8.0.26"
+    "8.2": "8.2.11"
+    "8.3": "8.3.4"
+    "9.0": "9.0.0"

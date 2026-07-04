@@ -9,6 +9,7 @@ import sys
 from om_health_check.config import Config
 from om_health_check.runner import run
 from om_health_check.thresholds import load_overrides
+from om_health_check.checks.version import load_version_overrides
 
 
 VALID_FORMATS = {"txt", "json", "html"}
@@ -118,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     load_overrides(args.config)
+    load_version_overrides(args.config)
 
     config = Config(
         om_url=args.om_url,

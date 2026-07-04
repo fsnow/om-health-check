@@ -1033,18 +1033,28 @@ def load_overrides(config_path: Optional[Union[str, Path]] = None) -> None:
     if not isinstance(data, dict):
         return
     overrides = data.get("thresholds")
-    if not isinstance(overrides, dict):
-        return
-    valid_fields = {f.name for f in fields(Threshold)}
-    for metric_name, values in overrides.items():
-        if metric_name not in THRESHOLDS or not isinstance(values, dict):
-            continue
-        default = THRESHOLDS[metric_name]
-        kwargs = {f.name: getattr(default, f.name) for f in fields(Threshold)}
-        for key, val in values.items():
-            if key in valid_fields:
-                kwargs[key] = val
-        THRESHOLDS[metric_name] = Threshold(**kwargs)
+    if isinstance(overrides, dict):
+        valid_fields = {f.name for f in fields(Threshold)}
+        for metric_name, values in overrides.items():
+            if metric_name not in THRESHOLDS or not isinstance(values, dict):
+                continue
+            default = THRESHOLDS[metric_name]
+            kwargs = {f.name: getattr(default, f.name) for f in fields(Threshold)}
+            for key, val in values.items():
+                if key in valid_fields:
+                    kwargs[key] = val
+            THRESHOLDS[metric_name] = Threshold(**kwargs)
+
+    # version: block — minimum_safe_versions merge + severity override
+    version_cfg = data.get("version")
+    if isinstance(version_cfg, dict):
+        global _VERSION_SEVERITY
+        severity = version_cfg.get("severity")
+        if isinstance(severity, str) and severity.lower() in _VERSION_SEVERITY_BY_NAME:
+            _VERSION_SEVERITY = _VERSION_SEVERITY_BY_NAME[severity.lower()]
+        mins = version_cfg.get("minimum_safe_versions")
+        if isinstance(mins, dict):
+            MINIMUM_SAFE_VERSIONS.update({str(k): str(v) for k, v in mins.items()})
 
 
 # =============================================================================
@@ -1956,12 +1966,24 @@ def _check_backup(client, project_id, cluster, hosts) -> Section:
 # -- 5.9 Version Information -------------------------------------------------
 
 # Minimum MongoDB 7.0+ versions considered safe (CVE coverage).
+# Per customer default, a below-minimum version is reported at INFO severity
+# (_VERSION_SEVERITY), not RED. Both the minimums and severity are overridable
+# via the `version:` block of the YAML config.
+# 9.0 is listed pre-emptively (0.0 placeholder) so the 9.0 line is recognized
+# on upgrade rather than falling through to "no known-bad version data".
 MINIMUM_SAFE_VERSIONS = {
     "7.0": "7.0.37",
     "8.0": "8.0.26",
     "8.2": "8.2.11",
     "8.3": "8.3.4",
+    "9.0": "9.0.0",
 }
+
+_VERSION_SEVERITY_BY_NAME = {
+    "info": STATUS_INFO, "warn": STATUS_WARN, "warning": STATUS_WARN,
+    "red": STATUS_RED, "critical": STATUS_RED,
+}
+_VERSION_SEVERITY = STATUS_INFO
 
 
 def _check_version(client, project_id, cluster, hosts) -> Section:
@@ -1979,7 +2001,7 @@ def _check_version(client, project_id, cluster, hosts) -> Section:
             message=f"All {len(hosts)} nodes running {ver}"))
     else:
         section.cluster_checks.append(Check(
-            name="Version consistency", status=STATUS_RED,
+            name="Version consistency", status=_VERSION_SEVERITY,
             message=f"Mixed versions: {', '.join(sorted(versions))}"))
 
     for ver in sorted(versions):
@@ -1999,7 +2021,7 @@ def _check_version(client, project_id, cluster, hosts) -> Section:
             continue
         if parsed < Version(min_safe):
             section.cluster_checks.append(Check(
-                name="Version check", status=STATUS_RED,
+                name="Version check", status=_VERSION_SEVERITY,
                 message=f"{ver} is below minimum safe version ({min_safe}) — "
                         "upgrade recommended for CVE coverage"))
         else:

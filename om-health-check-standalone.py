@@ -1388,8 +1388,9 @@ def _connectivity_one_host(client, project_id, host):
     hs = HostSection(host=host.host_port,
                      role=host.replica_state_name or host.type_name or "UNKNOWN")
     if not host.host_enabled:
-        hs.checks.append(Check(name="Node status", status=STATUS_RED,
-                               message="Host is disabled"))
+        # A disabled host is usually an intentional admin action, not a fault.
+        hs.checks.append(Check(name="Node status", status=STATUS_INFO,
+                               message="Host is disabled in Ops Manager — verify this is intentional"))
     elif host.replica_state_name and "DOWN" in host.replica_state_name.upper():
         hs.checks.append(Check(name="Node status", status=STATUS_RED,
                                message=f"Node state: {host.replica_state_name}"))
@@ -1444,14 +1445,16 @@ def _check_agents(client, project_id, hosts, section):
     # at project level rather than filtering by per-cluster hostnames.
     agents = client.om.agents.list_monitoring(project_id)
     if not agents:
+        # A monitoring gap degrades OM's visibility but does not itself mean
+        # MongoDB is unhealthy — surface as WARN, not RED.
         section.cluster_checks.append(Check(
-            name="Agent status", status=STATUS_RED,
+            name="Agent status", status=STATUS_WARN,
             message="No monitoring agents found in this project"))
         return
     active_agents = [a for a in agents if a.state_name == "ACTIVE"]
     if not active_agents:
         section.cluster_checks.append(Check(
-            name="Agent status", status=STATUS_RED,
+            name="Agent status", status=STATUS_WARN,
             message="No ACTIVE monitoring agent in project — "
             "monitoring data is not being collected"))
     else:
@@ -1666,6 +1669,20 @@ def _workload_one_host(client, project_id, host):
     metrics = fetch_host_metrics(client.om, project_id, host.id, _WORKLOAD_METRICS)
     for metric_name in _WORKLOAD_METRICS:
         current, baseline = metrics.get(metric_name, (None, None))
+
+        # Secondaries continuously issue getMores to tail the primary's oplog,
+        # so an elevated OPCOUNTER_GETMORE there is expected replication traffic,
+        # not a workload anomaly. Report the value as INFO instead of grading it.
+        if metric_name == "OPCOUNTER_GETMORE" and host.is_secondary:
+            value_str = f"{current:,.2f}" if current is not None else "no data"
+            hs.checks.append(Check(
+                name=metric_name, status=STATUS_INFO, value=current,
+                units=_WORKLOAD_UNITS.get(metric_name, "ops/s"),
+                baseline_value=baseline,
+                message=(f"{value_str} — not graded on secondaries "
+                         "(expected from oplog tailing)")))
+            continue
+
         result = evaluate_metric(metric_name, current, baseline)
         hs.checks.append(Check(
             name=metric_name, status=result.status, value=result.current_value,

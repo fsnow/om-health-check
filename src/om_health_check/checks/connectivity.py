@@ -77,8 +77,13 @@ def _check_host(client: HealthCheckClient, project_id: str, host: Host) -> HostS
 
     # Node status
     if not host.host_enabled:
+        # A disabled host is usually an intentional admin action, not a fault.
         hs.checks.append(
-            Check(name="Node status", status=STATUS_RED, message="Host is disabled")
+            Check(
+                name="Node status",
+                status=STATUS_INFO,
+                message="Host is disabled in Ops Manager — verify this is intentional",
+            )
         )
     elif host.replica_state_name and "DOWN" in host.replica_state_name.upper():
         hs.checks.append(
@@ -178,10 +183,12 @@ def _check_agents(
     """
     agents = client.om.agents.list_monitoring(project_id)
     if not agents:
+        # A monitoring gap degrades OM's visibility but does not itself mean
+        # MongoDB is unhealthy — surface as WARN, not RED.
         section.cluster_checks.append(
             Check(
                 name="Agent status",
-                status=STATUS_RED,
+                status=STATUS_WARN,
                 message="No monitoring agents found in this project",
             )
         )
@@ -192,7 +199,7 @@ def _check_agents(
         section.cluster_checks.append(
             Check(
                 name="Agent status",
-                status=STATUS_RED,
+                status=STATUS_WARN,
                 message="No ACTIVE monitoring agent in project — "
                 "monitoring data is not being collected",
             )

@@ -80,8 +80,8 @@ class TestAgentStatus:
         assert any(c.status == STATUS_GREEN for c in agent_checks)
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
-    def test_all_standby_red(self, mock_fetch, mock_client, cluster, primary):
-        """No ACTIVE agent means monitoring is broken."""
+    def test_all_standby_warn(self, mock_fetch, mock_client, cluster, primary):
+        """No ACTIVE agent is a monitoring gap (WARN), not a MongoDB fault."""
         mock_fetch.return_value = _MOCK_METRICS
         mock_client.om.agents.list_monitoring.return_value = [
             make_agent(hostname="mongo1.example.com", state_name="STANDBY", last_ping="2026-04-01T00:00:00Z"),
@@ -89,7 +89,7 @@ class TestAgentStatus:
         section = run(mock_client, "p1", cluster, [primary])
         agent_checks = [c for c in section.cluster_checks if c.name == "Agent status"]
         assert len(agent_checks) == 1
-        assert agent_checks[0].status == STATUS_RED
+        assert agent_checks[0].status == STATUS_WARN
         assert "No ACTIVE" in agent_checks[0].message
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
@@ -108,11 +108,11 @@ class TestAgentStatus:
         assert "2 standby" in agent_checks[0].message
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
-    def test_no_agents_red(self, mock_fetch, mock_client, cluster, primary):
+    def test_no_agents_warn(self, mock_fetch, mock_client, cluster, primary):
         mock_fetch.return_value = _MOCK_METRICS
         section = run(mock_client, "p1", cluster, [primary])
         agent_checks = [c for c in section.cluster_checks if c.name == "Agent status"]
-        assert agent_checks[0].status == STATUS_RED
+        assert agent_checks[0].status == STATUS_WARN
         assert "No monitoring agents" in agent_checks[0].message
 
 
@@ -125,13 +125,15 @@ class TestNodeStatus:
         assert node_checks[0].status == STATUS_GREEN
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
-    def test_disabled_node_red(self, mock_fetch, mock_client, cluster):
+    def test_disabled_node_info(self, mock_fetch, mock_client, cluster):
+        """A disabled host is an admin action, not a fault — INFO, not RED."""
         from tests.conftest import make_host
         host = make_host(host_enabled=False)
         mock_fetch.return_value = _MOCK_METRICS
         section = run(mock_client, "p1", cluster, [host])
         node_checks = [c for hs in section.hosts for c in hs.checks if c.name == "Node status"]
-        assert node_checks[0].status == STATUS_RED
+        assert node_checks[0].status == STATUS_INFO
+        assert "disabled" in node_checks[0].message.lower()
 
     @patch("om_health_check.checks.connectivity.fetch_host_metrics")
     def test_down_node_red(self, mock_fetch, mock_client, cluster):

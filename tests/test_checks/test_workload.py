@@ -88,6 +88,30 @@ class TestWorkloadMetrics:
 
     @patch("om_health_check.checks.workload._check_performance_advisor")
     @patch("om_health_check.checks.workload.fetch_host_metrics")
+    def test_getmore_graded_on_primary(self, mock_fetch, mock_advisor, mock_client, cluster, primary):
+        """On a primary, a GETMORE spike is graded normally (can go RED)."""
+        metrics = _green_metrics()
+        metrics["OPCOUNTER_GETMORE"] = (53, 8)  # >10 and 6.6x baseline
+        mock_fetch.return_value = metrics
+        section = run(mock_client, "p1", cluster, [primary])
+        gm = [c for c in section.hosts[0].checks if c.name == "OPCOUNTER_GETMORE"][0]
+        assert gm.status == STATUS_RED
+
+    @patch("om_health_check.checks.workload._check_performance_advisor")
+    @patch("om_health_check.checks.workload.fetch_host_metrics")
+    def test_getmore_info_on_secondary(self, mock_fetch, mock_advisor, mock_client, cluster, secondary):
+        """On a secondary, an elevated GETMORE is expected oplog tailing — INFO, not graded."""
+        metrics = _green_metrics()
+        metrics["OPCOUNTER_GETMORE"] = (53, 8)  # would be RED if graded
+        mock_fetch.return_value = metrics
+        section = run(mock_client, "p1", cluster, [secondary])
+        gm = [c for c in section.hosts[0].checks if c.name == "OPCOUNTER_GETMORE"][0]
+        assert gm.status == STATUS_INFO
+        assert "secondaries" in gm.message
+        assert gm.value == 53
+
+    @patch("om_health_check.checks.workload._check_performance_advisor")
+    @patch("om_health_check.checks.workload.fetch_host_metrics")
     def test_units_correct(self, mock_fetch, mock_advisor, mock_client, cluster, primary):
         mock_fetch.return_value = _green_metrics()
         section = run(mock_client, "p1", cluster, [primary])

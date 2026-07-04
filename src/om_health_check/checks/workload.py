@@ -99,6 +99,27 @@ def _check_host(client: HealthCheckClient, project_id: str, host: Host) -> HostS
     metrics = fetch_host_metrics(client.om, project_id, host.id, _ALL_METRICS)
     for metric_name in _ALL_METRICS:
         current, baseline = metrics.get(metric_name, (None, None))
+
+        # Secondaries continuously issue getMores to tail the primary's oplog,
+        # so an elevated OPCOUNTER_GETMORE there is expected replication traffic,
+        # not a workload anomaly. Report the value as INFO instead of grading it.
+        if metric_name == "OPCOUNTER_GETMORE" and host.is_secondary:
+            value_str = f"{current:,.2f}" if current is not None else "no data"
+            hs.checks.append(
+                Check(
+                    name=metric_name,
+                    status=STATUS_INFO,
+                    value=current,
+                    units=_UNITS.get(metric_name, "ops/s"),
+                    baseline_value=baseline,
+                    message=(
+                        f"{value_str} — not graded on secondaries "
+                        "(expected from oplog tailing)"
+                    ),
+                )
+            )
+            continue
+
         result = evaluate_metric(metric_name, current, baseline)
         hs.checks.append(
             Check(

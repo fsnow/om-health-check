@@ -146,3 +146,47 @@ def test_threshold_metric_names_match(standalone):
             f"Threshold name mismatch:\n  only in pkg: {sorted(only_pkg)}\n"
             f"  only in standalone: {sorted(only_std)}"
         )
+
+
+def _fake_hosts(specs):
+    """Build lightweight host stand-ins (version check reads only these attrs)."""
+    from types import SimpleNamespace
+    return [SimpleNamespace(version=v, host_port=hp) for v, hp in specs]
+
+
+@pytest.mark.parametrize("specs", [
+    # all same, safe
+    [("7.0.38", "m1:27017"), ("7.0.38", "m2:27017"), ("7.0.38", "m3:27017")],
+    # all same, below minimum
+    [("7.0.36", "m1:27017"), ("7.0.36", "m2:27017")],
+    # mixed versions
+    [("7.0.38", "m1:27017"), ("7.0.36", "m2:27017"), ("8.0.25", "m3:27017")],
+    # 9.0 line recognized
+    [("9.0.2", "m1:27017")],
+    # unmapped line (6.0) — no version-check finding
+    [("6.0.15", "m1:27017")],
+])
+def test_version_check_parity(standalone, specs):
+    """Package version.run and standalone _check_version must emit identical
+    (name, status, message) findings for the same hosts."""
+    from om_health_check.checks import version as pkg_version
+
+    # Configure identical notes on both sides to exercise the note path.
+    note = "addresses CVE-2026-11933"
+    pkg_saved = dict(pkg_version.VERSION_NOTES)
+    std_saved = dict(standalone._VERSION_NOTES)
+    try:
+        pkg_version.VERSION_NOTES["7.0"] = note
+        standalone._VERSION_NOTES["7.0"] = note
+
+        pkg_section = pkg_version.run(None, "p1", None, _fake_hosts(specs))
+        std_section = standalone._check_version(None, "p1", None, _fake_hosts(specs))
+
+        pkg_findings = [(c.name, c.status, c.message) for c in pkg_section.cluster_checks]
+        std_findings = [(c.name, c.status, c.message) for c in std_section.cluster_checks]
+        assert pkg_findings == std_findings
+    finally:
+        pkg_version.VERSION_NOTES.clear()
+        pkg_version.VERSION_NOTES.update(pkg_saved)
+        standalone._VERSION_NOTES.clear()
+        standalone._VERSION_NOTES.update(std_saved)

@@ -50,17 +50,16 @@ _SEVERITY_BY_NAME = {
 }
 VERSION_SEVERITY = STATUS_INFO
 
-# Reasons for the minimum versions
-VERSION_ISSUES = (
-    "CVE-2026-11933 (use-after-free in server-side JS BSON-to-array, info disclosure / DoS), "
-    "CVE-2026-25613 (CVSS 7.1, query planner segfault), "
-    "CVE-2026-1849/1850 (CVSS 7.1, OOM/DoS), "
-    "SERVER-94315 (duplicate records in sharded queries)"
-)
+# Optional advisory note per major.minor line, appended to a below-minimum
+# finding (e.g. the CVEs that the minimum patch addresses). Deliberately empty
+# in code — advisory text goes stale, so it lives only in the YAML config
+# (`version.version_notes`) where it can be maintained without touching this
+# script.
+VERSION_NOTES: dict[str, str] = {}
 
 
 def load_version_overrides(config_path: str | Path | None = None) -> None:
-    """Load `version:` config overrides (minimum_safe_versions, severity).
+    """Load `version:` config overrides (minimum_safe_versions, notes, severity).
 
     Uses the same file-search order as thresholds.load_overrides. Silently
     does nothing if PyYAML is missing, no config file is found, or the file
@@ -99,6 +98,10 @@ def load_version_overrides(config_path: str | Path | None = None) -> None:
         # Merge: listed lines override defaults, unlisted lines keep defaults.
         MINIMUM_SAFE_VERSIONS.update({str(k): str(v) for k, v in mins.items()})
 
+    notes = version_cfg.get("version_notes")
+    if isinstance(notes, dict):
+        VERSION_NOTES.update({str(k): str(v) for k, v in notes.items()})
+
 
 def run(
     client: HealthCheckClient,
@@ -113,6 +116,16 @@ def run(
     for host in hosts:
         v = host.version or "unknown"
         versions.setdefault(v, []).append(host.host_port)
+
+    if not versions:
+        section.cluster_checks.append(
+            Check(
+                name="Version consistency",
+                status=STATUS_INFO,
+                message="No version data available",
+            )
+        )
+        return section
 
     # Version consistency check
     if len(versions) == 1:
@@ -158,16 +171,17 @@ def run(
             continue
 
         if v < min_safe_v:
+            note = VERSION_NOTES.get(major_minor)
+            message = f"{version_str} is below minimum safe version {min_safe}"
+            if note:
+                message += f" — {note}"
+            message += f". Affected hosts: {', '.join(host_list)}"
             section.cluster_checks.append(
                 Check(
                     name="Version check",
                     status=VERSION_SEVERITY,
                     value=version_str,
-                    message=(
-                        f"{version_str} is below minimum safe version "
-                        f"{min_safe} — {VERSION_ISSUES}. "
-                        f"Affected hosts: {', '.join(host_list)}"
-                    ),
+                    message=message,
                 )
             )
         else:

@@ -45,12 +45,28 @@ class TestKnownBadVersions:
         assert bad_checks[0].status == STATUS_GREEN
 
     def test_below_minimum_info(self, mock_client, cluster):
-        """Below-minimum defaults to INFO (customer preference), still lists CVEs."""
-        hosts = [make_host(version="7.0.36")]
+        """Below-minimum defaults to INFO; base message, no baked-in CVE text."""
+        hosts = [make_host(version="7.0.36", hostname="m1")]
         section = run(mock_client, "p1", cluster, hosts)
         bad_checks = [c for c in section.cluster_checks if c.name == "Version check"]
         assert bad_checks[0].status == STATUS_INFO
-        assert "CVE" in bad_checks[0].message
+        assert "below minimum safe version 7.0.37" in bad_checks[0].message
+        assert "Affected hosts:" in bad_checks[0].message
+        # No advisory text is hardcoded — that lives only in the YAML config.
+        assert "CVE" not in bad_checks[0].message
+
+    def test_below_minimum_note_appended(self, mock_client, cluster):
+        """A configured version_note is appended to the below-minimum message."""
+        original = dict(version_mod.VERSION_NOTES)
+        try:
+            version_mod.VERSION_NOTES["7.0"] = "addresses CVE-2026-11933"
+            hosts = [make_host(version="7.0.36")]
+            section = run(mock_client, "p1", cluster, hosts)
+            bad = [c for c in section.cluster_checks if c.name == "Version check"]
+            assert "— addresses CVE-2026-11933. Affected hosts:" in bad[0].message
+        finally:
+            version_mod.VERSION_NOTES.clear()
+            version_mod.VERSION_NOTES.update(original)
 
     def test_version_8_0_safe(self, mock_client, cluster):
         hosts = [make_host(version="8.0.26")]

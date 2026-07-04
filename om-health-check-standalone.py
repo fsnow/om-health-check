@@ -1045,7 +1045,7 @@ def load_overrides(config_path: Optional[Union[str, Path]] = None) -> None:
                     kwargs[key] = val
             THRESHOLDS[metric_name] = Threshold(**kwargs)
 
-    # version: block — minimum_safe_versions merge + severity override
+    # version: block — minimum_safe_versions + notes merge + severity override
     version_cfg = data.get("version")
     if isinstance(version_cfg, dict):
         global _VERSION_SEVERITY
@@ -1055,6 +1055,9 @@ def load_overrides(config_path: Optional[Union[str, Path]] = None) -> None:
         mins = version_cfg.get("minimum_safe_versions")
         if isinstance(mins, dict):
             MINIMUM_SAFE_VERSIONS.update({str(k): str(v) for k, v in mins.items()})
+        notes = version_cfg.get("version_notes")
+        if isinstance(notes, dict):
+            _VERSION_NOTES.update({str(k): str(v) for k, v in notes.items()})
 
 
 # =============================================================================
@@ -1984,50 +1987,65 @@ _VERSION_SEVERITY_BY_NAME = {
     "red": STATUS_RED, "critical": STATUS_RED,
 }
 _VERSION_SEVERITY = STATUS_INFO
+# Optional advisory note per major.minor line — YAML-only, empty in code.
+_VERSION_NOTES = {}
 
 
 def _check_version(client, project_id, cluster, hosts) -> Section:
+    # Mirror of the package version check — must produce byte-identical output.
     section = Section(name="Version Information")
-    versions = {h.version for h in hosts if h.version}
+
+    versions = {}  # version -> list of host:port (insertion order)
+    for host in hosts:
+        v = host.version or "unknown"
+        versions.setdefault(v, []).append(host.host_port)
+
     if not versions:
         section.cluster_checks.append(Check(
             name="Version consistency", status=STATUS_INFO,
             message="No version data available"))
         return section
+
     if len(versions) == 1:
-        ver = next(iter(versions))
+        version_str = next(iter(versions))
         section.cluster_checks.append(Check(
-            name="Version consistency", status=STATUS_GREEN,
-            message=f"All {len(hosts)} nodes running {ver}"))
+            name="Version consistency", status=STATUS_GREEN, value=version_str,
+            message=f"All {len(hosts)} nodes running {version_str}"))
     else:
+        detail = "; ".join(
+            f"{v}: {', '.join(h)}" for v, h in sorted(versions.items()))
         section.cluster_checks.append(Check(
             name="Version consistency", status=_VERSION_SEVERITY,
-            message=f"Mixed versions: {', '.join(sorted(versions))}"))
+            message=f"Inconsistent versions across cluster — {detail}"))
 
-    for ver in sorted(versions):
+    for version_str, host_list in versions.items():
+        if version_str == "unknown":
+            continue
         try:
-            parsed = Version(ver)
+            parsed = Version(version_str)
         except InvalidVersion:
-            section.cluster_checks.append(Check(
-                name="Version check", status=STATUS_INFO,
-                message=f"Could not parse version: {ver}"))
             continue
         major_minor = f"{parsed.major}.{parsed.minor}"
         min_safe = MINIMUM_SAFE_VERSIONS.get(major_minor)
-        if not min_safe:
-            section.cluster_checks.append(Check(
-                name="Version check", status=STATUS_INFO,
-                message=f"{ver} — no known-bad version data for {major_minor}"))
+        if min_safe is None:
             continue
-        if parsed < Version(min_safe):
+        try:
+            min_safe_v = Version(min_safe)
+        except InvalidVersion:
+            continue
+        if parsed < min_safe_v:
+            note = _VERSION_NOTES.get(major_minor)
+            message = f"{version_str} is below minimum safe version {min_safe}"
+            if note:
+                message += f" — {note}"
+            message += f". Affected hosts: {', '.join(host_list)}"
             section.cluster_checks.append(Check(
                 name="Version check", status=_VERSION_SEVERITY,
-                message=f"{ver} is below minimum safe version ({min_safe}) — "
-                        "upgrade recommended for CVE coverage"))
+                value=version_str, message=message))
         else:
             section.cluster_checks.append(Check(
-                name="Version check", status=STATUS_GREEN,
-                message=f"{ver} meets minimum safe version ({min_safe})"))
+                name="Version check", status=STATUS_GREEN, value=version_str,
+                message=f"{version_str} meets minimum safe version ({min_safe})"))
     return section
 
 

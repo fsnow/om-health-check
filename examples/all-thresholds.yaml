@@ -373,6 +373,11 @@ version:
   # A major.minor line with no entry (built-in or here) produces no
   # version-currency finding.
   #
+  # Minor-version lines (e.g. 8.1, 8.2, 8.3) are supported the same way as
+  # major/LTS lines — each is keyed by "major.minor" and checked independently.
+  # Now that the 8.x minor releases are supported (no longer rapid releases),
+  # add whichever lines your fleet runs.
+  #
   # 9.0 is listed pre-emptively with a 9.0.0 placeholder so the 9.0 line is
   # recognized on upgrade; bump it when real 9.0 advisories are published.
   minimum_safe_versions:
@@ -381,3 +386,30 @@ version:
     "8.2": "8.2.11"
     "8.3": "8.3.4"
     "9.0": "9.0.0"
+
+  # Advisory note per major.minor line, appended to a below-minimum finding
+  # (e.g. the CVEs the minimum patch addresses). This text is stored ONLY here
+  # — not baked into the script — so it can be updated as new advisories are
+  # published without shipping a new build. Omit a line to show just
+  # "X is below minimum safe version Y" with no advisory text.
+  #
+  # The minimums above are driven by CVE-2026-11933 (the newest and highest-
+  # severity 2026 advisory); reaching them also covers the earlier 2026 batch
+  # (CVE-2026-9740..9754), which was fixed at lower patch levels.
+  version_notes:
+    "7.0": >-
+      CVE-2026-11933 (CVSS 8.8) post-auth use-after-free in server-side JS
+      BSON-to-array conversion (info disclosure / DoS); also covers the earlier
+      2026 crash/DoS advisories CVE-2026-9740..9754
+    "8.0": >-
+      CVE-2026-11933 (CVSS 8.8) post-auth use-after-free in server-side JS
+      BSON-to-array conversion (info disclosure / DoS); also covers the earlier
+      2026 crash/DoS advisories CVE-2026-9740..9754
+    "8.2": >-
+      CVE-2026-11933 (CVSS 8.8) post-auth use-after-free in server-side JS
+      BSON-to-array conversion (info disclosure / DoS); also covers the earlier
+      2026 crash/DoS advisories CVE-2026-9742..9754
+    "8.3": >-
+      CVE-2026-11933 (CVSS 8.8) post-auth use-after-free in server-side JS
+      BSON-to-array conversion (info disclosure / DoS); also covers earlier 2026
+      advisories incl. CVE-2026-9735 (keyfile in logs) and CVE-2026-9742..9754

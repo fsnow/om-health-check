@@ -210,39 +210,59 @@ class TestModeAbsolute:
 # ---------------------------------------------------------------------------
 
 class TestModeBaseline:
+    # CACHE_DIRTY_BYTES is a pure MODE_BASELINE metric (deviation=3.0, no
+    # relevance_floor) — a stable anchor for generic baseline-deviation
+    # behavior. (The network metrics gained a relevance_floor, so they now
+    # have their own floor-aware tests below.)
     def test_spike_red(self):
-        r = evaluate_metric("NETWORK_BYTES_IN", 40000, 10000)  # 4x
+        r = evaluate_metric("CACHE_DIRTY_BYTES", 40000, 10000)  # 4x
         assert r.status == STATUS_RED
 
     def test_normal_green(self):
-        r = evaluate_metric("NETWORK_BYTES_IN", 12000, 10000)  # 1.2x
+        r = evaluate_metric("CACHE_DIRTY_BYTES", 12000, 10000)  # 1.2x
         assert r.status == STATUS_GREEN
 
     def test_exact_threshold(self):
-        r = evaluate_metric("NETWORK_BYTES_IN", 30000, 10000)  # 3.0x = deviation
+        r = evaluate_metric("CACHE_DIRTY_BYTES", 30000, 10000)  # 3.0x = deviation
         assert r.status == STATUS_RED
 
     def test_just_under(self):
-        r = evaluate_metric("NETWORK_BYTES_IN", 29000, 10000)  # 2.9x
+        r = evaluate_metric("CACHE_DIRTY_BYTES", 29000, 10000)  # 2.9x
         assert r.status == STATUS_GREEN
 
     def test_no_baseline(self):
         # Cluster < 1 week old — explicit INFO with message
-        r = evaluate_metric("NETWORK_BYTES_IN", 10000, None)
+        r = evaluate_metric("CACHE_DIRTY_BYTES", 10000, None)
         assert r.status == STATUS_INFO
         assert "no baseline data available" in r.message.lower()
 
     def test_zero_baseline_nonzero_current(self):
-        r = evaluate_metric("NETWORK_BYTES_IN", 100, 0)
+        r = evaluate_metric("CACHE_DIRTY_BYTES", 100, 0)
         assert r.status == STATUS_RED
 
-    def test_network_spike(self):
-        r = evaluate_metric("NETWORK_BYTES_IN", 150000, 40000)  # 3.75x
+
+class TestNetworkRelevanceFloor:
+    """Network metrics gate the 3x-deviation check on relevance_floor: below a
+    meaningful absolute rate, a spike is workload noise, not a signal."""
+
+    def test_spike_above_floor_red(self):
+        # 20 MB/s at 4x baseline — above the 5 MB/s floor → RED
+        r = evaluate_metric("NETWORK_BYTES_IN", 20_000_000, 5_000_000)
         assert r.status == STATUS_RED
 
-    def test_network_normal(self):
-        r = evaluate_metric("NETWORK_BYTES_IN", 50000, 40000)  # 1.25x
+    def test_spike_below_floor_green(self):
+        # 150 KB/s at 3.75x baseline — below the floor → suppressed to GREEN
+        r = evaluate_metric("NETWORK_BYTES_IN", 150_000, 40_000)
         assert r.status == STATUS_GREEN
+
+    def test_num_requests_below_floor_green(self):
+        # 300 req/s at 5x baseline — below the 1000 req/s floor → GREEN
+        r = evaluate_metric("NETWORK_NUM_REQUESTS", 300, 60)
+        assert r.status == STATUS_GREEN
+
+    def test_num_requests_above_floor_red(self):
+        r = evaluate_metric("NETWORK_NUM_REQUESTS", 5000, 1000)  # 5x, above floor
+        assert r.status == STATUS_RED
 
 
 # ---------------------------------------------------------------------------

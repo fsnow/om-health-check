@@ -17,25 +17,33 @@ thresholds:
   # -----------------------------------------------------------------------
 
   # System-level network throughput (host-wide, includes non-mongod traffic).
+  # relevance_floor gates the 3x-deviation check: below 5 MB/s, a network spike
+  # is routine workload churn, not a signal. Raise/lower per environment.
   SYSTEM_NETWORK_IN:
     deviation: 3.0
+    relevance_floor: 5000000
     mode: baseline
 
   SYSTEM_NETWORK_OUT:
     deviation: 3.0
+    relevance_floor: 5000000
     mode: baseline
 
   # mongod process-level network bytes and request count.
   NETWORK_BYTES_IN:
     deviation: 3.0
+    relevance_floor: 5000000
     mode: baseline
 
   NETWORK_BYTES_OUT:
     deviation: 3.0
+    relevance_floor: 5000000
     mode: baseline
 
+  # Request count (ops/s) — floor in requests, not bytes.
   NETWORK_NUM_REQUESTS:
     deviation: 3.0
+    relevance_floor: 1000
     mode: baseline
 
   # -----------------------------------------------------------------------
@@ -198,20 +206,22 @@ thresholds:
     deviation: 3.0
     mode: and
 
+  # Write rates: red=100/s (raised from 10) so a RED means a genuine write
+  # surge, not trivial volume. Requires 100+/s AND 3x baseline under mode=and.
   DOCUMENT_METRICS_INSERTED:
-    red: 10
+    red: 100
     direction: above
     deviation: 3.0
     mode: and
 
   DOCUMENT_METRICS_UPDATED:
-    red: 10
+    red: 100
     direction: above
     deviation: 3.0
     mode: and
 
   DOCUMENT_METRICS_DELETED:
-    red: 10
+    red: 100
     direction: above
     deviation: 3.0
     mode: and
@@ -255,8 +265,10 @@ thresholds:
     deviation: 3.0
     mode: and
 
+  # Raised to 100 to match DOCUMENT_METRICS_INSERTED (same inserts). The rest of
+  # the OPCOUNTER_* family is still red=10 pending a getMore-driven review.
   OPCOUNTER_INSERT:
-    red: 10
+    red: 100
     direction: above
     deviation: 3.0
     mode: and

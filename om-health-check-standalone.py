@@ -844,11 +844,13 @@ class Threshold:
 
 
 # Section 1: Connectivity & Infrastructure
-SYSTEM_NETWORK_IN = Threshold(deviation=3.0, mode=MODE_BASELINE)
-SYSTEM_NETWORK_OUT = Threshold(deviation=3.0, mode=MODE_BASELINE)
-NETWORK_BYTES_IN = Threshold(deviation=3.0, mode=MODE_BASELINE)
-NETWORK_BYTES_OUT = Threshold(deviation=3.0, mode=MODE_BASELINE)
-NETWORK_NUM_REQUESTS = Threshold(deviation=3.0, mode=MODE_BASELINE)
+# Network throughput: relevance_floor gates the 3x deviation so only a surge
+# past a meaningful absolute rate fires (sub-MB/s at 3x was prod noise).
+SYSTEM_NETWORK_IN = Threshold(deviation=3.0, relevance_floor=5_000_000, mode=MODE_BASELINE)
+SYSTEM_NETWORK_OUT = Threshold(deviation=3.0, relevance_floor=5_000_000, mode=MODE_BASELINE)
+NETWORK_BYTES_IN = Threshold(deviation=3.0, relevance_floor=5_000_000, mode=MODE_BASELINE)
+NETWORK_BYTES_OUT = Threshold(deviation=3.0, relevance_floor=5_000_000, mode=MODE_BASELINE)
+NETWORK_NUM_REQUESTS = Threshold(deviation=3.0, relevance_floor=1000, mode=MODE_BASELINE)
 
 # Section 2: Compute Resources
 SYSTEM_NORMALIZED_CPU_USER = Threshold(
@@ -899,14 +901,15 @@ QUERY_EXECUTOR_SCANNED_OBJECTS = Threshold(
 DOCUMENT_METRICS_RETURNED = Threshold(
     red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
 )
+# Document write rates raised 10 -> 100/s: 11 inserts/s at 3.6x was prod noise.
 DOCUMENT_METRICS_INSERTED = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
 )
 DOCUMENT_METRICS_UPDATED = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
 )
 DOCUMENT_METRICS_DELETED = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
 )
 OPERATIONS_SCAN_AND_ORDER = Threshold(
     red=1.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
@@ -926,8 +929,10 @@ OPCOUNTER_DELETE = Threshold(
 OPCOUNTER_GETMORE = Threshold(
     red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
 )
+# Raised 10 -> 100 to match DOCUMENT_METRICS_INSERTED; rest of OPCOUNTER_* still
+# at red=10 pending the getMore-driven review of the whole family.
 OPCOUNTER_INSERT = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
 )
 OP_EXECUTION_TIME_READS = Threshold(
     red=100, warn=50, direction=DIR_ABOVE,

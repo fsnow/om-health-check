@@ -4,11 +4,15 @@
 # rest. Unspecified fields on overridden metrics retain their defaults.
 #
 # Fields:
-#   red        — value that triggers RED status (null = no absolute threshold)
-#   warn       — value that triggers WARN status (null = no WARN threshold)
-#   direction  — "above" (RED when value >= red) or "below" (RED when value <= red)
-#   deviation  — baseline multiplier (e.g. 3.0 = RED if current >= 3x baseline)
-#   mode       — absolute | baseline | and | or  (see README for semantics)
+#   red             — value that triggers RED status (null = no absolute threshold)
+#   warn            — value that triggers WARN status (null = no WARN threshold)
+#   direction       — "above" (RED when value >= red) or "below" (RED when value <= red)
+#   deviation       — baseline multiplier (e.g. 3.0 = RED if current >= 3x baseline)
+#   relevance_floor — gate on the deviation check: it is ignored unless the current
+#                     value is past this absolute floor (>= it for "above" metrics,
+#                     <= it for "below"). Suppresses "3x of a tiny number" noise.
+#                     Omit for no floor.
+#   mode            — absolute | baseline | and | or  (see README for semantics)
 
 thresholds:
 
@@ -50,28 +54,33 @@ thresholds:
   # Section 2: Compute Resources
   # -----------------------------------------------------------------------
 
-  # CPU user% — RED only if above 95 AND 2x baseline (suppresses stable high load).
+  # CPU user% — a genuine absolute concern, so mode=or fires on red/warn even
+  # when steady (no deviation). relevance_floor gates the deviation branch so a
+  # spike off a cold base (10% -> 20%) doesn't fire.
   SYSTEM_NORMALIZED_CPU_USER:
     red: 95.0
     warn: 80.0
     direction: above
     deviation: 2.0
-    mode: and
+    relevance_floor: 80.0
+    mode: or
 
-  # CPU iowait% — RED only if above 20 AND 3x baseline.
+  # CPU iowait% — same: absolute concern OR a deviation above the floor.
   SYSTEM_NORMALIZED_CPU_IOWAIT:
     red: 20.0
     warn: 10.0
     direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 10.0
+    mode: or
 
-  # mongod process CPU% — RED only if above 80 AND 2x baseline.
+  # mongod process CPU%.
   PROCESS_NORMALIZED_CPU_USER:
     red: 80.0
     direction: above
     deviation: 2.0
-    mode: and
+    relevance_floor: 50.0
+    mode: or
 
   # Available memory (MB). Direction=below. RED if under 500 OR dropped to 30% of baseline.
   SYSTEM_MEMORY_AVAILABLE:
@@ -150,128 +159,121 @@ thresholds:
     deviation: 3.0
     mode: baseline
 
-  # Cache I/O bytes/sec — AND mode: tiny values (e.g. 200 B/sec) shouldn't
-  # fire RED even at 4x baseline. red=1 MB/sec floor below which it's noise.
+  # Cache I/O throughput (bytes/sec) — pure rate: baseline deviation with a
+  # 1 MB/sec relevance_floor below which a spike is noise.
   CACHE_BYTES_READ_INTO:
-    red: 1_000_000
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000000
+    mode: baseline
 
   CACHE_BYTES_WRITTEN_FROM:
-    red: 1_000_000
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000000
+    mode: baseline
 
   # -----------------------------------------------------------------------
   # Section 5: Database Activity & Workload
   # -----------------------------------------------------------------------
 
-  # Query targeting — RED only if ratio > 1000 AND 2x baseline.
+  # Query targeting is an efficiency RATIO (docs scanned per doc returned): a
+  # high ratio is bad on its own, so mode=or fires on the absolute red even when
+  # steady. relevance_floor gates the deviation branch so a 2x jump on an
+  # already-efficient query (5 -> 10) doesn't fire.
   QUERY_TARGETING_SCANNED_PER_RETURNED:
     red: 1000
     direction: above
     deviation: 2.0
-    mode: and
+    relevance_floor: 100
+    mode: or
 
   QUERY_TARGETING_SCANNED_OBJECTS_PER_RETURNED:
     red: 1000
     direction: above
     deviation: 2.0
-    mode: and
+    relevance_floor: 100
+    mode: or
 
-  # Rate metrics below use mode=AND: RED only when the absolute rate is high
-  # enough to matter AND also deviates from baseline. Pure baseline mode
-  # produces false positives on quiet clusters where 3x of a near-zero
-  # baseline is still near-zero.
+  # ---- Pure RATE metrics (ops/s, docs/s) ---------------------------------
+  # These have no "bad on its own" value — high just means busy. They use
+  # mode=baseline (deviation detection) with a relevance_floor as the noise
+  # floor: a spike only fires once the absolute rate is high enough to matter.
+  #
+  # The floors below are CONSERVATIVE, provisional defaults chosen to be quiet
+  # out of the box. They are NOT right for every cluster and are expected to be
+  # overridden per cluster. Two levers to tune here:
+  #   - relevance_floor: raise on a low-volume cluster to cut noise; lower on a
+  #     high-volume cluster so a smaller surge still registers.
+  #   - deviation: 3.0 suits a low-volume / newly-online cluster; during triage
+  #     on a busy cluster a deviation as low as 1.5 can be significant.
 
   # Query executor scan rates.
   QUERY_EXECUTOR_SCANNED:
-    red: 100
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 10000
+    mode: baseline
 
   QUERY_EXECUTOR_SCANNED_OBJECTS:
-    red: 1000
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 10000
+    mode: baseline
 
   # Document throughput.
   DOCUMENT_METRICS_RETURNED:
-    red: 100
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 10000
+    mode: baseline
 
-  # Write rates: red=100/s (raised from 10) so a RED means a genuine write
-  # surge, not trivial volume. Requires 100+/s AND 3x baseline under mode=and.
   DOCUMENT_METRICS_INSERTED:
-    red: 100
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
   DOCUMENT_METRICS_UPDATED:
-    red: 100
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
   DOCUMENT_METRICS_DELETED:
-    red: 100
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
-  # In-memory sort operations. A single scan-and-order in an hour rounds to
-  # 0.00; the AND threshold prevents firing on these tiny absolute values.
+  # In-memory sort operations.
   OPERATIONS_SCAN_AND_ORDER:
-    red: 1.0
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 100
+    mode: baseline
 
   # Opcounters.
   OPCOUNTER_CMD:
-    red: 20
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
   OPCOUNTER_QUERY:
-    red: 10
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
   OPCOUNTER_UPDATE:
-    red: 10
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
   OPCOUNTER_DELETE:
-    red: 10
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
   OPCOUNTER_GETMORE:
-    red: 10
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
-  # Raised to 100 to match DOCUMENT_METRICS_INSERTED (same inserts). The rest of
-  # the OPCOUNTER_* family is still red=10 pending a getMore-driven review.
   OPCOUNTER_INSERT:
-    red: 100
-    direction: above
     deviation: 3.0
-    mode: and
+    relevance_floor: 1000
+    mode: baseline
 
   # Average operation execution time (ms). RED if above 100 ms OR 2x baseline
   # AND current value is above 20 ms. The relevance_floor of 20 ms suppresses

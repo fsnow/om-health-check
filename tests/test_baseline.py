@@ -269,41 +269,100 @@ class TestNetworkRelevanceFloor:
 # evaluate_metric — MODE_AND
 # ---------------------------------------------------------------------------
 
-class TestModeAnd:
+class TestConcernMetricsModeOr:
+    """CPU % and targeting ratios are genuine absolute concerns: mode=OR fires
+    on the absolute red/warn regardless of baseline, and a deviation above the
+    relevance_floor fires too. (Converted from mode=AND 2026-06-29.)"""
+
     def test_both_conditions_red(self):
-        # CPU 97%, baseline 40% -> above 95 threshold AND 2.4x > 2.0 deviation
+        # CPU 97%, baseline 40% -> above 95 threshold (and 2.4x deviation)
         r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 97.0, 40.0)
         assert r.status == STATUS_RED
 
-    def test_threshold_crossed_baseline_normal_info(self):
-        # CPU 97%, baseline 95% -> above threshold but 1.02x < 2.0 deviation
+    def test_steady_high_fires_red(self):
+        # The Group B fix: 97% CPU that's always been ~95% (1.02x, no deviation)
+        # now fires RED because 97 >= red 95. Under the old mode=and it was INFO
+        # — a box pegged at 97% wrongly stayed quiet.
         r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 97.0, 95.0)
-        assert r.status == STATUS_INFO
+        assert r.status == STATUS_RED
 
     def test_below_threshold_green(self):
         r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 50.0, 45.0)
         assert r.status == STATUS_GREEN
 
-    def test_warn_without_deviation(self):
-        # Between warn (80) and red (95), warn fires regardless of deviation
+    def test_warn_zone(self):
+        # Between warn (80) and red (95), not deviating enough: WARN
         r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 85.0, 80.0)
         assert r.status == STATUS_WARN
 
-    def test_iowait_both(self):
-        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_IOWAIT", 25.0, 5.0)  # > 20 and 5x > 3.0
+    def test_deviation_above_floor_reds_early(self):
+        # 90% CPU at 2.25x baseline (>= 80 floor, below red 95): deviation fires
+        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 90.0, 40.0)
         assert r.status == STATUS_RED
 
-    def test_iowait_threshold_only(self):
-        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_IOWAIT", 22.0, 18.0)  # > 20 but 1.2x < 3.0
-        assert r.status == STATUS_INFO
+    def test_deviation_below_floor_suppressed(self):
+        # 30% at 3x baseline but below the 80% relevance_floor → not graded on
+        # deviation; 30 < warn 80 → GREEN
+        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 30.0, 10.0)
+        assert r.status == STATUS_GREEN
 
-    def test_query_targeting_and_red(self):
-        r = evaluate_metric("QUERY_TARGETING_SCANNED_PER_RETURNED", 1500, 500)  # > 1000 and 3x > 2.0
+    def test_iowait_absolute_red(self):
+        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_IOWAIT", 25.0, 5.0)  # >= 20
         assert r.status == STATUS_RED
 
-    def test_query_targeting_and_suppressed(self):
-        r = evaluate_metric("QUERY_TARGETING_SCANNED_PER_RETURNED", 1200, 1100)  # > 1000 but 1.09x < 2.0
+    def test_iowait_steady_high_red(self):
+        # 22% iowait, 1.2x (steady) — >= red 20 → RED under OR
+        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_IOWAIT", 22.0, 18.0)
+        assert r.status == STATUS_RED
+
+    def test_targeting_absolute_red(self):
+        r = evaluate_metric("QUERY_TARGETING_SCANNED_PER_RETURNED", 1500, 500)  # >= 1000
+        assert r.status == STATUS_RED
+
+    def test_targeting_steady_high_red(self):
+        # Persistently inefficient ratio (1200, 1.09x) — >= red 1000 → RED
+        r = evaluate_metric("QUERY_TARGETING_SCANNED_PER_RETURNED", 1200, 1100)
+        assert r.status == STATUS_RED
+
+    def test_targeting_deviation_below_floor_green(self):
+        # Ratio doubled 5 -> 10 but below the 100 relevance_floor → no false RED
+        r = evaluate_metric("QUERY_TARGETING_SCANNED_PER_RETURNED", 10, 5)
+        assert r.status == STATUS_GREEN
+
+
+@pytest.fixture
+def and_metric():
+    """A synthetic mode=and threshold. No production metric uses mode=and any
+    more, but it remains a valid mode a customer can set in YAML, so keep its
+    evaluation logic covered."""
+    from om_health_check.thresholds import THRESHOLDS
+    name = "_TEST_MODE_AND"
+    THRESHOLDS[name] = Threshold(
+        red=100, warn=50, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND,
+    )
+    try:
+        yield name
+    finally:
+        del THRESHOLDS[name]
+
+
+class TestModeAndLogic:
+    def test_both_conditions_red(self, and_metric):
+        r = evaluate_metric(and_metric, 300, 100)  # >= 100 and 3x >= 2.0
+        assert r.status == STATUS_RED
+
+    def test_threshold_only_info(self, and_metric):
+        # >= red 100 but 1.09x < 2.0 deviation → INFO (above threshold, normal baseline)
+        r = evaluate_metric(and_metric, 120, 110)
         assert r.status == STATUS_INFO
+
+    def test_warn_zone(self, and_metric):
+        r = evaluate_metric(and_metric, 60, 55)  # between warn 50 and red 100
+        assert r.status == STATUS_WARN
+
+    def test_below_green(self, and_metric):
+        r = evaluate_metric(and_metric, 30, 25)
+        assert r.status == STATUS_GREEN
 
 
 # ---------------------------------------------------------------------------
@@ -405,11 +464,17 @@ class TestMissingBaseline:
         assert r.status == STATUS_INFO
         assert "no baseline data available" in r.message.lower()
 
-    def test_and_mode_degrades_to_threshold_over(self):
+    def test_and_mode_degrades_to_threshold_over(self, and_metric):
         # MODE_AND, over threshold, no baseline → WARN (can't confirm deviation)
-        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 97.0, None)
+        r = evaluate_metric(and_metric, 120, None)
         assert r.status == STATUS_WARN
         assert "no baseline data available" in r.message.lower()
+
+    def test_or_mode_absolute_fires_without_baseline(self):
+        # MODE_OR concern metric with no baseline still fires on the absolute
+        # threshold (CPU 97% >= red 95 → RED, deviation branch simply inactive).
+        r = evaluate_metric("SYSTEM_NORMALIZED_CPU_USER", 97.0, None)
+        assert r.status == STATUS_RED
 
     def test_and_mode_degrades_to_threshold_under(self):
         # MODE_AND, under threshold, no baseline → GREEN

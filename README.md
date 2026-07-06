@@ -118,6 +118,7 @@ See [`examples/low-thresholds.yaml`](examples/low-thresholds.yaml) for a smoke-t
 | `warn` | float | Value that triggers WARN status |
 | `direction` | string | `"above"` (RED when value >= red) or `"below"` (RED when value <= red) |
 | `deviation` | float | Baseline multiplier (e.g. `3.0` = RED if current >= 3x baseline) |
+| `relevance_floor` | float | Gate on the deviation check — ignored unless the current value is past this absolute floor (>= it for `above` metrics, <= it for `below`). Suppresses "3x of a tiny number" noise. Omit for no floor. |
 | `mode` | string | How threshold and baseline interact (see below) |
 
 ### Evaluation modes

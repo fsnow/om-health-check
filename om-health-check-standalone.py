@@ -853,12 +853,18 @@ NETWORK_BYTES_OUT = Threshold(deviation=3.0, relevance_floor=5_000_000, mode=MOD
 NETWORK_NUM_REQUESTS = Threshold(deviation=3.0, relevance_floor=1000, mode=MODE_BASELINE)
 
 # Section 2: Compute Resources
+# CPU % is a genuine absolute concern — mode=OR fires on red/warn regardless of
+# baseline; relevance_floor gates the deviation branch (no false-fire on a cold-
+# base spike). Provisional defaults — tune per cluster in YAML.
 SYSTEM_NORMALIZED_CPU_USER = Threshold(
-    red=95.0, warn=80.0, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
+    red=95.0, warn=80.0, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=80.0, mode=MODE_OR)
 SYSTEM_NORMALIZED_CPU_IOWAIT = Threshold(
-    red=20.0, warn=10.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
+    red=20.0, warn=10.0, direction=DIR_ABOVE,
+    deviation=3.0, relevance_floor=10.0, mode=MODE_OR)
 PROCESS_NORMALIZED_CPU_USER = Threshold(
-    red=80.0, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
+    red=80.0, direction=DIR_ABOVE,
+    deviation=2.0, relevance_floor=50.0, mode=MODE_OR)
 SYSTEM_MEMORY_AVAILABLE = Threshold(
     red=500, warn=1000, direction=DIR_BELOW, deviation=0.3, mode=MODE_OR)
 MEMORY_RESIDENT = Threshold(deviation=2.0, mode=MODE_BASELINE)
@@ -879,60 +885,61 @@ DISK_PARTITION_SPACE_PERCENT_FREE = Threshold(
 # Section 4: Cache Resources
 CACHE_USED_BYTES = Threshold(deviation=2.0, mode=MODE_BASELINE)
 CACHE_DIRTY_BYTES = Threshold(deviation=3.0, mode=MODE_BASELINE)
+# Cache I/O throughput (bytes/s) — pure rate: baseline + relevance_floor.
 CACHE_BYTES_READ_INTO = Threshold(
-    red=1_000_000, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
+    deviation=3.0, relevance_floor=1_000_000, mode=MODE_BASELINE)
 CACHE_BYTES_WRITTEN_FROM = Threshold(
-    red=1_000_000, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND)
+    deviation=3.0, relevance_floor=1_000_000, mode=MODE_BASELINE)
 
 # Section 5: Database Activity & Workload
+# Query-targeting efficiency RATIO — mode=OR fires on the absolute red; the
+# relevance_floor gates the deviation branch (no false-fire on an efficient query).
 QUERY_TARGETING_SCANNED_PER_RETURNED = Threshold(
-    red=1000, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
+    red=1000, direction=DIR_ABOVE, deviation=2.0, relevance_floor=100, mode=MODE_OR)
 QUERY_TARGETING_SCANNED_OBJECTS_PER_RETURNED = Threshold(
-    red=1000, direction=DIR_ABOVE, deviation=2.0, mode=MODE_AND)
-# Rate metrics use mode=AND: RED only when value is high enough to matter
-# in absolute terms AND deviates from baseline. Pure baseline mode produces
-# false positives on quiet clusters where 3x of "tiny" is still tiny.
+    red=1000, direction=DIR_ABOVE, deviation=2.0, relevance_floor=100, mode=MODE_OR)
+# Pure RATE metrics (ops/s, docs/s, bytes/s): mode=BASELINE deviation detection
+# with a relevance_floor as the noise floor. Floors are provisional conservative
+# defaults; the customer tunes per cluster in YAML (lower deviation toward 1.5
+# and/or the floor for high-volume triage).
 QUERY_EXECUTOR_SCANNED = Threshold(
-    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=10_000, mode=MODE_BASELINE,
 )
 QUERY_EXECUTOR_SCANNED_OBJECTS = Threshold(
-    red=1000, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=10_000, mode=MODE_BASELINE,
 )
 DOCUMENT_METRICS_RETURNED = Threshold(
-    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=10_000, mode=MODE_BASELINE,
 )
-# Document write rates raised 10 -> 100/s: 11 inserts/s at 3.6x was prod noise.
 DOCUMENT_METRICS_INSERTED = Threshold(
-    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 DOCUMENT_METRICS_UPDATED = Threshold(
-    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 DOCUMENT_METRICS_DELETED = Threshold(
-    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 OPERATIONS_SCAN_AND_ORDER = Threshold(
-    red=1.0, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=100, mode=MODE_BASELINE,
 )
 OPCOUNTER_CMD = Threshold(
-    red=20, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 OPCOUNTER_QUERY = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 OPCOUNTER_UPDATE = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 OPCOUNTER_DELETE = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 OPCOUNTER_GETMORE = Threshold(
-    red=10, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
-# Raised 10 -> 100 to match DOCUMENT_METRICS_INSERTED; rest of OPCOUNTER_* still
-# at red=10 pending the getMore-driven review of the whole family.
 OPCOUNTER_INSERT = Threshold(
-    red=100, direction=DIR_ABOVE, deviation=3.0, mode=MODE_AND,
+    deviation=3.0, relevance_floor=1_000, mode=MODE_BASELINE,
 )
 OP_EXECUTION_TIME_READS = Threshold(
     red=100, warn=50, direction=DIR_ABOVE,

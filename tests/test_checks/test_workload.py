@@ -91,7 +91,7 @@ class TestWorkloadMetrics:
     def test_getmore_graded_on_primary(self, mock_fetch, mock_advisor, mock_client, cluster, primary):
         """On a primary, a GETMORE spike is graded normally (can go RED)."""
         metrics = _green_metrics()
-        metrics["OPCOUNTER_GETMORE"] = (53, 8)  # >10 and 6.6x baseline
+        metrics["OPCOUNTER_GETMORE"] = (5000, 1000)  # above 1000 floor and 5x baseline
         mock_fetch.return_value = metrics
         section = run(mock_client, "p1", cluster, [primary])
         gm = [c for c in section.hosts[0].checks if c.name == "OPCOUNTER_GETMORE"][0]

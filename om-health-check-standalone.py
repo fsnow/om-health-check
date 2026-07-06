@@ -65,7 +65,7 @@ except ImportError:
     _YAML_AVAILABLE = False
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 # Suppress verbose HTTP error logs; we summarize failures ourselves.
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)

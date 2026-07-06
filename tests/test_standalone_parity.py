@@ -148,6 +148,24 @@ def test_threshold_metric_names_match(standalone):
         )
 
 
+def test_threshold_values_match(standalone):
+    """Every threshold's fields (red/warn/direction/deviation/relevance_floor/
+    mode) must be identical between package and standalone. The names test above
+    does not catch a value that was hand-edited in one file but not the other."""
+    from om_health_check.thresholds import THRESHOLDS as pkg_thresholds
+    fieldnames = ["red", "warn", "direction", "deviation", "relevance_floor", "mode"]
+    mismatches = []
+    for name in sorted(set(pkg_thresholds) & set(standalone.THRESHOLDS)):
+        p, s = pkg_thresholds[name], standalone.THRESHOLDS[name]
+        for f in fieldnames:
+            pv, sv = getattr(p, f, None), getattr(s, f, None)
+            if pv != sv:
+                mismatches.append(f"  {name}.{f}: pkg={pv} std={sv}")
+    if mismatches:
+        pytest.fail("Threshold value drift between package and standalone:\n"
+                    + "\n".join(mismatches))
+
+
 def _fake_hosts(specs):
     """Build lightweight host stand-ins (version check reads only these attrs)."""
     from types import SimpleNamespace

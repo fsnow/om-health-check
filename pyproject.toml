@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "om-health-check"
-version = "0.7.0"
+version = "0.7.1"
 description = "Automated MongoDB cluster health checks via the Ops Manager API — for incident triage and proactive review."
 readme = "README.md"
 license = {file = "LICENSE"}

@@ -7,7 +7,14 @@ from datetime import datetime, timezone
 from opsmanager.types import Cluster, Host
 
 from om_health_check.client import HealthCheckClient
-from om_health_check.models import STATUS_GREEN, STATUS_INFO, STATUS_RED, Check, Section
+from om_health_check.models import (
+    STATUS_GREEN,
+    STATUS_INFO,
+    STATUS_RED,
+    STATUS_WARN,
+    Check,
+    Section,
+)
 
 
 def run(
@@ -49,18 +56,14 @@ def run(
         )
     )
 
-    # Check snapshot schedule and latest snapshot
+    # Check snapshot schedule and latest snapshot. If this data is unavailable
+    # (e.g. the snapshotSchedule resource returns 404), stay silent per customer
+    # request — the "Backup is enabled and active" status above already conveys
+    # that backup is running, which is the primary objective for this section.
     try:
         schedule = client.om.backup.get_snapshot_schedule(project_id, cluster.id)
         snapshots = client.om.backup.list_snapshots(project_id, cluster.id)
-    except Exception as exc:
-        section.cluster_checks.append(
-            Check(
-                name="Backup capture lag",
-                status=STATUS_INFO,
-                message=f"Could not retrieve snapshot data: {exc}",
-            )
-        )
+    except Exception:
         return section
 
     if not snapshots:
@@ -75,13 +78,16 @@ def run(
 
     latest = snapshots[0]
 
-    # Check for in-progress snapshots
+    # Check for in-progress snapshots. A backup running during the health check
+    # is flagged WARN (per customer request): it is expected activity, not a
+    # fault, but worth surfacing because snapshot I/O can affect the cluster
+    # during incident triage.
     if not latest.complete:
         section.cluster_checks.append(
             Check(
                 name="Snapshot in progress",
-                status=STATUS_INFO,
-                message="A snapshot is currently being captured",
+                status=STATUS_WARN,
+                message="A backup snapshot is currently being captured",
             )
         )
         # Note which replica set members are involved

@@ -65,7 +65,7 @@ except ImportError:
     _YAML_AVAILABLE = False
 
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
 # Suppress verbose HTTP error logs; we summarize failures ourselves.
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
@@ -1923,13 +1923,13 @@ def _check_backup(client, project_id, cluster, hosts) -> Section:
         name="Backup configuration", status=STATUS_GREEN,
         message="Backup is enabled and active"))
 
+    # Snapshot data unavailable (e.g. snapshotSchedule 404) -> stay silent per
+    # customer request; the GREEN "Backup is enabled and active" above already
+    # conveys that backup is running.
     try:
         schedule = client.om.backup.get_snapshot_schedule(project_id, cluster.id)
         snapshots = client.om.backup.list_snapshots(project_id, cluster.id)
-    except Exception as exc:
-        section.cluster_checks.append(Check(
-            name="Backup capture lag", status=STATUS_INFO,
-            message=f"Could not retrieve snapshot data: {exc}"))
+    except Exception:
         return section
     if not snapshots:
         section.cluster_checks.append(Check(
@@ -1937,10 +1937,12 @@ def _check_backup(client, project_id, cluster, hosts) -> Section:
             message="No snapshots found — backup may not be capturing"))
         return section
     latest = snapshots[0]
+    # A backup running during the health check -> WARN (expected activity, but
+    # snapshot I/O can affect the cluster during triage).
     if not latest.complete:
         section.cluster_checks.append(Check(
-            name="Snapshot in progress", status=STATUS_INFO,
-            message="A snapshot is currently being captured"))
+            name="Snapshot in progress", status=STATUS_WARN,
+            message="A backup snapshot is currently being captured"))
         if latest.parts:
             for part in latest.parts:
                 if part.replica_state:

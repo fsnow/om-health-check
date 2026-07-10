@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock
 
 from om_health_check.checks.backup import run
-from om_health_check.models import STATUS_GREEN, STATUS_RED, STATUS_INFO
+from om_health_check.models import STATUS_GREEN, STATUS_RED, STATUS_INFO, STATUS_WARN
 from tests.conftest import make_cluster, make_host
 
 
@@ -74,7 +74,8 @@ class TestBackupCaptureLag:
         assert lag_checks[0].status == STATUS_RED
         assert "No snapshots" in lag_checks[0].message
 
-    def test_in_progress_snapshot_info(self, mock_client, cluster, primary):
+    def test_in_progress_snapshot_warn(self, mock_client, cluster, primary):
+        """A backup running during the check is WARN (customer request)."""
         mock_client.om.backup.get_backup_config.side_effect = None
         mock_client.om.backup.get_backup_config.return_value = _make_backup_config()
         mock_client.om.backup.get_snapshot_schedule.return_value = _make_schedule(6)
@@ -82,4 +83,16 @@ class TestBackupCaptureLag:
         section = run(mock_client, "p1", cluster, [primary])
         progress_checks = [c for c in section.cluster_checks if c.name == "Snapshot in progress"]
         assert len(progress_checks) == 1
-        assert progress_checks[0].status == STATUS_INFO
+        assert progress_checks[0].status == STATUS_WARN
+
+    def test_snapshot_data_unavailable_suppressed(self, mock_client, cluster, primary):
+        """When snapshot data can't be retrieved, emit no 'could not retrieve'
+        line — only the GREEN 'Backup is enabled and active' remains."""
+        mock_client.om.backup.get_backup_config.side_effect = None
+        mock_client.om.backup.get_backup_config.return_value = _make_backup_config()
+        mock_client.om.backup.get_snapshot_schedule.side_effect = Exception("404 snapshotSchedule")
+        section = run(mock_client, "p1", cluster, [primary])
+        assert len(section.cluster_checks) == 1
+        assert section.cluster_checks[0].status == STATUS_GREEN
+        assert "enabled and active" in section.cluster_checks[0].message
+        assert not any("could not retrieve" in c.message.lower() for c in section.cluster_checks)

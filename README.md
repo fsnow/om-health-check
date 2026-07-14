@@ -4,19 +4,22 @@ A CLI tool that queries the MongoDB Ops Manager API to produce a structured heal
 
 ## What it does
 
-Runs 9 categories of checks against one or more clusters via the Ops Manager API:
+Runs 10 categories of checks against one or more clusters via the Ops Manager API:
 
 1. **Connectivity & Infrastructure** — API reachability, node status, agent status, active alerts, network throughput
 2. **Compute Resources** — CPU (user, iowait, process), memory, swap; deeper CPU breakdown when issues detected
 3. **Disk Resources** — read/write latency, IOPS, partition space, iowait correlation
 4. **Cache Resources** — WiredTiger cache used bytes, dirty bytes, cache read/write rates
 5. **Database Activity & Workload** — query targeting, scan and order, opcounters, document metrics, execution times, global lock queues, Performance Advisor
-6. **Replication** — replication lag, oplog window, oplog rate
-7. **Connections** — connection count, zero-connection detection, connection storm correlation
-8. **Backup** — backup config status, snapshot schedule adherence, capture lag
-9. **Version Information** — version consistency across nodes, known-bad version detection (CVEs)
+6. **Oplog** — oplog window (`OPLOG_MASTER_TIME`) and oplog write rate, per replica-set member
+7. **Replication** — secondary replication lag behind the primary
+8. **Connections** — connection count, zero-connection detection, connection storm correlation
+9. **Backup** — backup config status, in-progress snapshot, snapshot schedule adherence, capture lag
+10. **Version Information** — version consistency across nodes, and version currency against configurable minimum-safe versions (INFO by default)
 
 Each metric is compared against both an absolute threshold and a 1-week baseline (same day-of-week, same hour) to reduce false positives from normal workload variance.
+
+See **[METRICS.md](METRICS.md)** for a full reference: every metric, what it measures, its units, and the exact status criteria.
 
 ## Installation
 
@@ -28,7 +31,7 @@ Requires Python 3.9+.
 
 ## API key permissions
 
-The API key must have the **Project Read Only** role on each project being checked. This provides read access to deployments, measurements, alerts, agents, and backup status — covering 8 of the 9 check sections.
+The API key must have the **Project Read Only** role on each project being checked. This provides read access to deployments, measurements, alerts, agents, and backup status — covering everything except the Performance Advisor portion of the Database Activity & Workload section.
 
 No write permissions are required. The tool never modifies any Ops Manager configuration.
 
@@ -38,7 +41,7 @@ The **Performance Advisor** section calls endpoints that require the **Project D
 
 The minimum role granting this access (Project Data Access Read Only) also grants the holder read access to database contents. There is no narrower read-only-observability role for Performance Advisor in Ops Manager.
 
-For security-conscious deployments where most personnel should not have database read access, run the tool with a **Project Read Only** key. The Performance Advisor section will report an INFO message — *"Performance Advisor access denied — requires Project Data Access Read Only role or higher"* — and the other 8 sections work normally. To minimize API load when access is denied, the script makes only one Performance Advisor call per cluster and reuses the message for the remaining hosts.
+For security-conscious deployments where most personnel should not have database read access, run the tool with a **Project Read Only** key. The Performance Advisor check will report an INFO message — *"Performance Advisor access denied — requires Project Data Access Read Only role or higher"* — and the rest of the report works normally. To minimize API load when access is denied, the script makes only one Performance Advisor call per cluster and reuses the message for the remaining hosts.
 
 If the API key lacks sufficient permissions, affected checks report a clear message indicating which permission is missing rather than failing the whole report.
 
@@ -110,63 +113,13 @@ See [`examples/all-thresholds.yaml`](examples/all-thresholds.yaml) for a referen
 
 See [`examples/low-thresholds.yaml`](examples/low-thresholds.yaml) for a smoke-test config with aggressively low thresholds designed to trigger RED on a healthy cluster — useful for verifying the tool runs end-to-end.
 
-### Threshold fields
+For the threshold fields and the evaluation-mode semantics, see the field legend at the top of [`examples/all-thresholds.yaml`](examples/all-thresholds.yaml).
 
-| Field | Type | Description |
-|---|---|---|
-| `red` | float | Value that triggers RED status |
-| `warn` | float | Value that triggers WARN status |
-| `direction` | string | `"above"` (RED when value >= red) or `"below"` (RED when value <= red) |
-| `deviation` | float | Baseline multiplier (e.g. `3.0` = RED if current >= 3x baseline) |
-| `relevance_floor` | float | Gate on the deviation check — ignored unless the current value is past this absolute floor (>= it for `above` metrics, <= it for `below`). Suppresses "3x of a tiny number" noise. Omit for no floor. |
-| `mode` | string | How threshold and baseline interact (see below) |
+## How checks are evaluated
 
-### Evaluation modes
+Statuses (GREEN / WARN / RED / INFO), the roll-up rule (**INFO never colors the overall status**), baseline windowing, the evaluation modes, and the relevance floor are all documented in **[METRICS.md](METRICS.md)**, alongside the exact criteria for every metric.
 
-| Mode | Behavior |
-|---|---|
-| `absolute` | RED if value crosses threshold. Baseline is informational. |
-| `baseline` | RED only if value deviates from baseline by the configured multiplier. No absolute threshold. |
-| `and` | RED only if value crosses threshold AND deviates from baseline. Suppresses false positives from stable elevated values. |
-| `or` | RED if value crosses threshold OR deviates from baseline. Catches both absolute danger and unusual spikes. |
-
-## Baseline comparison
-
-Current metric values are compared against the same hour, same day of week, one week prior. This accounts for recurring workload patterns (business hours vs nights vs weekends) and avoids flagging normal variance as anomalous.
-
-**Current values** are fetched at PT1M granularity over the past hour and averaged, producing a 1-hour rolling average. This sidesteps Ops Manager's mid-hour PT1H rollup, which is not yet populated for rate-based metrics (CPU %, network bytes/sec) until the hour boundary.
-
-**Baseline values** are fetched at PT1H granularity from the 1-hour window one week ago. Ops Manager retains hourly data for 2 months by default.
-
-Comparing two hourly averages keeps the check apples-to-apples and resistant to single-minute spikes.
-
-### Graceful degradation when data is missing
-
-The tool is resilient to gaps in OM data:
-
-- **No current data available** → reported as INFO (e.g., no read activity means no `DISK_PARTITION_LATENCY_READ` sample)
-- **No baseline data available** (cluster is less than 1 week old) → behavior depends on evaluation mode:
-  - `absolute` — works unchanged (baseline is informational)
-  - `baseline` — reports INFO with the current value and "no baseline yet (cluster < 1 week old)"
-  - `and` / `or` — degrades to threshold-only evaluation, with a "no baseline yet" note appended to the message
-- **Metric not exposed by the OM API version** → batched fetch falls back to per-metric calls; unavailable metrics are summarized once on stderr
-
-## Status rollup
-
-Each check produces one of four statuses:
-
-- `GREEN` — healthy
-- `WARN` — approaching threshold
-- `RED` — threshold crossed or baseline significantly deviated
-- `INFO` — informational only (missing data, advisory alerts, degraded evaluation)
-
-Section, cluster, and overall status roll up the worst status among their children — **with one important rule: `INFO` never bubbles up**. A cluster with only INFO items still reports overall GREEN. This keeps the headline color honest about operational health without hiding informational details.
-
-Certain advisory alerts (e.g., `HOST_SECURITY_CHECKUP_NOT_MET`, which commonly fires as a false positive for deployments using external auth like LDAP) are classified as INFO so they are visible but do not color the overall report.
-
-## Monitoring agents
-
-Ops Manager uses leader election for monitoring agents: exactly one agent per project is `ACTIVE`, the rest are `STANDBY` (ready to take over if the active agent fails). The tool reports a single GREEN "Agent status" check when at least one agent is ACTIVE, and RED only if no ACTIVE agent exists (which means monitoring data is not being collected).
+One operational note not covered there: if a metric is not exposed by the running Ops Manager API version, the batched fetch falls back to per-metric calls and the unavailable metrics are summarized once on stderr.
 
 ## Dependencies
 
